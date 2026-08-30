@@ -1,0 +1,42 @@
+{
+  "name": "@smm/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "gate:isolation": "vitest run src/tenancy.isolation.test.ts",
+    "seed": "node --import @swc-node/register/esm-register ./scripts/seed.mjs",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.1.0",
+    "@smm/config": "workspace:*",
+    "@node-rs/argon2": "^2.0.2"
+  },
+  "devDependencies": {
+    "prisma": "^6.1.0",
+    "@swc-node/register": "^1.10.9",
+    "@swc/core": "^1.10.1"
+  },
+  "prisma": {
+    "schema": "prisma/schema.prisma"
+  },
+  "files": [
+    "dist"
+  ]
+}
