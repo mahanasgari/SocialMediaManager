@@ -1,0 +1,43 @@
+# The build context is uploaded to the daemon in full, so this file decides
+# both how fast a build starts and what could end up in an image layer.
+
+# Secrets. .env.local in particular holds a real ENCRYPTION_KEY on a developer
+# machine, and a copy of it inside an image is a copy that outlives the laptop.
+.env
+.env.*
+!.env.example
+
+# Reinstalled inside the image from the lockfile. Copying a host node_modules
+# also copies platform-specific binaries — a Windows or macOS build of a native
+# module inside a Linux image fails at require time, not at build time.
+node_modules
+**/node_modules
+
+# Build output. Regenerated in the build stage; a stale copy from the host would
+# silently win over the fresh one.
+dist
+**/dist
+.next
+**/.next
+.turbo
+**/.turbo
+
+# Generated. `prisma generate` runs in the build stage against the schema.
+packages/database/generated
+**/*.tsbuildinfo
+
+.git
+.github
+.vscode
+.idea
+*.log
+coverage
+**/coverage
+playwright-report
+test-results
+
+# Documentation does not affect a build, and excluding it keeps the context
+# small. STATUS.md and the design docs live in the repository, not the image.
+*.md
+!README.md
+docs
