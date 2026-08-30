@@ -1,0 +1,28 @@
+{
+  "name": "@smm/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --conditions development --import @swc-node/register/esm-register --watch src/main.ts",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@smm/config": "workspace:*",
+    "@smm/database": "workspace:*",
+    "@smm/providers": "workspace:*",
+    "@smm/publishing": "workspace:*",
+    "@smm/ratelimit": "workspace:*",
+    "ioredis": "^5.4.1",
+    "@smm/integrations": "workspace:*",
+    "@smm/storage": "workspace:*",
+    "@smm/media": "workspace:*"
+  },
+  "devDependencies": {
+    "@swc-node/register": "^1.10.9",
+    "@swc/core": "^1.10.1"
+  }
+}
