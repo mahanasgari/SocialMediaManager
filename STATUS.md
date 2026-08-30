@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1034 tests passing, 0 failing. Type-check, lint and the evidence-citation gate
+**1034 unit and integration tests, plus 20 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -124,6 +124,27 @@ Fan-out was verified with the agency case: one event for an account connected by
 two workspaces produced **one stored payload and two deliveries**, each with its
 own processing state. Events matching no account are recorded as unrouted and
 **dropped**.
+
+### End-to-end tests
+
+Twenty Playwright tests against a real browser, API, worker and database. They
+exist because 1034 unit tests caught none of the bugs that only appear when
+those pieces are wired together, and every one below was found by writing them:
+
+- **Sign-out did nothing visible.** The endpoint answers 204, and browsers do
+  not navigate on 204 — so the session was destroyed and the page stayed on the
+  signed-in application.
+- **The IP rate limiter locked out legitimate users.** Successful sign-ins
+  cleared the account counter but not the address counter, so an office behind
+  one NAT would accumulate 40 successful logins and lock everyone out. Success
+  now refunds exactly one attempt, leaving the counter measuring failures.
+- **`Card` silently discarded every prop it did not name.** A `data-testid`
+  never reached the DOM, and the failure looked like a missing element.
+
+They cover sign-in and its guards, all fifteen sections rendering, the sidebar
+marking the right section, compose validation against the real capability
+matrix, publishing and drafting, and the connector honesty policy — including
+that a skeleton is refused server-side, not merely disabled in the UI.
 
 ### Brute-force defence
 
@@ -265,7 +286,6 @@ Named plainly so nobody goes looking.
 | **Campaigns, labels, templates, UTM builder** | Phase 8. Not started. |
 | **Export jobs** | Phase 9. Per-workspace and per-subject export are specified, not built. Purge and retention ARE built — see above. |
 | **22 remaining connectors** | Documented skeletons, disabled with a stated reason. |
-| **E2E suite** | Playwright is planned, not written. Every flow above was verified by hand against the running stack, which does not survive a refactor. |
 | **Compose stack** | The images build and each process runs, but the containers have not been run together. Blocked on host disk space, not on code. |
 
 ### Deliberately excluded, permanently

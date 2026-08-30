@@ -95,7 +95,15 @@ export default async function AccountsPage({
         <div className="mt-3 space-y-2">
           {providers.ok ? (
             providers.data.map((p) => (
-              <Card key={p.id} className="flex flex-wrap items-start justify-between gap-4 p-4">
+              <Card
+                key={p.id}
+                // A stable handle for the end-to-end suite. The alternative is
+                // a locator that walks the DOM by class name, which breaks the
+                // next time this card is restyled — and a test that breaks on
+                // restyling teaches people to distrust the suite.
+                data-testid={`provider-${p.id}`}
+                className="flex flex-wrap items-start justify-between gap-4 p-4"
+              >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <p className="text-sm font-medium">{p.label}</p>

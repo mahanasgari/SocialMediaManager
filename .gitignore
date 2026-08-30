@@ -37,3 +37,9 @@ Thumbs.db
 
 # Session notes, not project history
 .remember/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+.playwright/

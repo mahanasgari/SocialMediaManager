@@ -125,12 +125,42 @@ export class AttemptLimiter {
   /**
    * Clears the counter after a successful sign-in.
    *
-   * Without this, someone who mistypes twice a day is eventually locked out by
-   * an accumulation of attempts they already recovered from.
+   * For the ACCOUNT key. Without this, someone who mistypes twice a day is
+   * eventually locked out by an accumulation of attempts they already
+   * recovered from.
    */
   async succeed(kind: string, identifier: string): Promise<void> {
     const key = this.key(kind, identifier)
     await this.redis.del(key, `${key}:locked`)
+  }
+
+  /**
+   * Returns one consumed attempt, without clearing the rest.
+   *
+   * For the IP key on a SUCCESSFUL sign-in. Clearing it outright would let an
+   * attacker holding one valid account reset the whole address budget at will,
+   * defeating the spray protection entirely. Leaving it alone is worse the
+   * other way: an office behind a single NAT accumulates successful sign-ins
+   * until everyone there is locked out, which is an outage caused by people
+   * using the product correctly.
+   *
+   * Refunding exactly one leaves the counter measuring FAILURES from that
+   * address, which is the thing worth limiting.
+   *
+   * Found by the end-to-end suite, which signs in repeatedly from one host and
+   * locked itself out partway through.
+   */
+  async refund(kind: string, identifier: string): Promise<void> {
+    const key = this.key(kind, identifier)
+    // Guarded so a refund cannot drive the counter below zero and hand out a
+    // larger budget than the policy allows.
+    await this.redis.eval(
+      `local n = tonumber(redis.call('GET', KEYS[1]) or '0')
+       if n > 0 then redis.call('DECR', KEYS[1]) end
+       return 1`,
+      1,
+      key
+    )
   }
 
   /**

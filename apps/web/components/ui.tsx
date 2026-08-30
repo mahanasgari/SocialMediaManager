@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties, HTMLAttributes, ReactNode } from 'react'
 import { AlertTriangle, Inbox } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { Card as BaseCard } from '@/components/ui/card'
@@ -16,18 +16,30 @@ import { Badge as BaseBadge } from '@/components/ui/badge'
  * while they migrate. Both are marked below.
  */
 
+/**
+ * Forwards every remaining prop to the underlying element.
+ *
+ * The earlier version accepted only `children`, `className` and `style`, and
+ * silently dropped everything else — so a `data-testid` added for the
+ * end-to-end suite simply never reached the DOM, and the test failed looking
+ * for an element that was on screen the whole time.
+ *
+ * A wrapper that quietly discards props is worse than no wrapper: the caller
+ * has no way to tell it happened.
+ */
 export function Card({
   children,
   className = '',
   style,
-}: {
+  ...rest
+}: HTMLAttributes<HTMLDivElement> & {
   children: ReactNode
   className?: string
   /** @deprecated Prefer a Tailwind class. Kept for pages not yet migrated. */
   style?: CSSProperties
 }) {
   return (
-    <BaseCard className={className} {...(style ? { style } : {})}>
+    <BaseCard className={className} {...(style ? { style } : {})} {...rest}>
       {children}
     </BaseCard>
   )

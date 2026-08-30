@@ -25,17 +25,21 @@
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:logs": "docker compose logs -f api worker web",
-    "docker:down": "docker compose down"
+    "docker:down": "docker compose down",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:install": "playwright install chromium"
   },
   "devDependencies": {
+    "@eslint/js": "^9.14.0",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.9.0",
     "eslint": "^9.14.0",
     "prettier": "^3.3.3",
     "turbo": "^2.2.3",
     "typescript": "^5.6.3",
-    "vitest": "^2.1.4",
     "typescript-eslint": "^8.14.0",
-    "@eslint/js": "^9.14.0"
+    "vitest": "^2.1.4"
   },
   "type": "module"
 }

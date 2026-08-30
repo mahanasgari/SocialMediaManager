@@ -1,13 +1,13 @@
 import { redirect } from 'next/navigation'
 import { headers } from 'next/headers'
 import Link from 'next/link'
-import { LogOut } from 'lucide-react'
 import { getMe, getWorkspaces } from '@/lib/api'
 import { apiGet } from '@/lib/server-fetch'
 import { Nav } from '@/components/nav'
 import { WorkspaceSwitcher } from '@/components/workspace-switcher.client'
 import { ThemeToggle } from '@/components/theme-toggle.client'
 import { MobileNav } from '@/components/mobile-nav.client'
+import { SignOut } from '@/components/sign-out.client'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { TooltipProvider } from '@/components/ui/tooltip'
 
@@ -91,15 +91,7 @@ export default async function WorkspaceLayout({
                 {me.data.email}
               </p>
             </div>
-            <form action="/api/v1/auth/logout" method="post">
-              <button
-                type="submit"
-                className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
-              >
-                <LogOut className="size-4 shrink-0" />
-                Sign out
-              </button>
-            </form>
+            <SignOut />
           </div>
         </aside>
 
