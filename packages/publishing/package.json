@@ -1,0 +1,31 @@
+{
+  "name": "@smm/publishing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@smm/config": "workspace:*",
+    "@smm/database": "workspace:*",
+    "@smm/providers": "workspace:*",
+    "@smm/ratelimit": "workspace:*",
+    "ioredis": "^5.4.1",
+    "@smm/storage": "workspace:*"
+  },
+  "files": [
+    "dist"
+  ]
+}
