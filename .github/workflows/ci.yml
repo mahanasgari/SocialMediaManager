@@ -1,0 +1,82 @@
+name: CI
+on:
+  push: { branches: [main] }
+  pull_request:
+
+env:
+  # The application connects as an UNPRIVILEGED role. Superusers bypass
+  # row-level security unconditionally, and FORCE ROW LEVEL SECURITY does not
+  # change that — it only removes the table owner's exemption. Running the suite
+  # as the owner would make every isolation test pass vacuously.
+  TEST_DATABASE_URL: postgresql://smm_app_user:smm@localhost:5432/smm_test
+  TEST_DATABASE_OWNER_URL: postgresql://smm:smm@localhost:5432/smm_test
+  MIGRATE_DATABASE_URL: postgresql://smm:smm@localhost:5432/smm_test
+  TEST_REDIS_URL: redis://localhost:6379
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: smm, POSTGRES_PASSWORD: smm, POSTGRES_DB: smm_test }
+        options: >-
+          --health-cmd "pg_isready -U smm" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+        ports: ["6379:6379"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+
+      - name: Apply migrations as the owner
+        run: DATABASE_URL="$MIGRATE_DATABASE_URL" pnpm --filter @smm/database migrate:deploy
+
+      # The smm_app privilege role is created BY a migration, so the login role
+      # can only be granted membership after migrations have run.
+      - name: Provision the unprivileged application role
+        run: |
+          PGPASSWORD=smm psql -h localhost -U smm -d smm_test -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'smm_app_user') THEN
+              CREATE ROLE smm_app_user LOGIN PASSWORD 'smm' NOSUPERUSER NOBYPASSRLS;
+            END IF;
+          END
+          $$;
+          GRANT smm_app TO smm_app_user;
+          SQL
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+
+      # --- Standing gates (TASKS.md) -------------------------------------
+      # Enforced by static check rather than reviewer memory.
+
+      # G1 — the isolation suite enumerates tenant-scoped models from the Prisma
+      # DMMF, so a new model with a workspaceId is covered automatically and
+      # forgetting isolation fails here rather than shipping quietly.
+      - name: "Gate G1 — every tenant-scoped model has an isolation test"
+        run: pnpm --filter @smm/database gate:isolation
+
+      # G3 — a [V] marker without a citation is an assumption wearing a badge.
+      - name: "Gate G3 — every [V] marker cites a URL and retrieval date"
+        run: node scripts/gate-evidence-markers.mjs
+
+      # G2 — activates with P2-05 (packages/ratelimit).
+      # Left commented rather than made permissive: a gate that passes vacuously
+      # is worse than no gate, because it reads as coverage.
+      # - name: "Gate G2 — every provider call has a declared rate budget"
+      #   run: pnpm --filter @smm/providers gate:budgets
