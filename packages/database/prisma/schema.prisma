@@ -1,0 +1,1020 @@
+// Phase 1 schema — identity, tenancy, and the infrastructure the publishing
+// pipeline will lean on. Content, media, inbox and analytics models arrive in
+// Phases 3, 4, 6 and 7; see DATABASE.md for the full target shape.
+//
+// Two conventions are load-bearing rather than stylistic:
+//
+//   * Every tenant-scoped model carries `workspaceId` (or `organizationId` for
+//     org-level models) AND `deletedAt`. The tenancy client extension refuses
+//     to query a tenant-scoped model without a scope, and filters soft-deleted
+//     rows automatically. See packages/database/src/tenancy.ts.
+//
+//   * Composite indexes lead with the tenancy column, because every query is
+//     already filtered by it and an index that does not lead with it cannot
+//     serve those queries.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  OWNER
+  ADMIN
+  MANAGER
+  EDITOR
+  AUTHOR
+  APPROVER
+  ANALYST
+  CLIENT
+  VIEWER
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+/// Delivery state for the transactional outbox. Delivery is AT-LEAST-ONCE:
+/// every consumer must be idempotent. See ARCHITECTURE.md section 3.
+enum OutboxStatus {
+  PENDING
+  DISPATCHED
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Identity and tenancy
+// ---------------------------------------------------------------------------
+
+/// Billing and entitlement boundary.
+model Organization {
+  id           String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  name         String
+  slug         String    @unique
+  plan         String    @default("self-hosted")
+  entitlements Json      @default("{}")
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  deletedAt    DateTime?
+
+  workspaces  Workspace[]
+  memberships Membership[]
+  invites     Invite[]
+  auditLogs   AuditLog[]
+
+  @@index([deletedAt])
+}
+
+/// Content and isolation boundary. An agency's client, or a brand.
+model Workspace {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String    @db.Uuid
+  name           String
+  slug           String
+  timezone       String    @default("UTC")
+  settings       Json      @default("{}")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+  /// Set when soft-deleted. Surfaced in the UI as a real date, never "soon".
+  purgeAt        DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memberships    Membership[]
+  invites        Invite[]
+  auditLogs      AuditLog[]
+  socialAccounts SocialAccount[]
+  posts          Post[]
+  media          MediaAsset[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, deletedAt])
+}
+
+model User {
+  id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  email           String    @unique
+  passwordHash    String
+  name            String
+  avatarUrl       String?
+  timezone        String    @default("UTC")
+  locale          String    @default("en")
+  emailVerifiedAt DateTime?
+  /// User deletion anonymises rather than cascades: content belongs to the
+  /// workspace, so authorship becomes a tombstone and posts survive.
+  anonymizedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  memberships  Membership[]
+  sessions     Session[]
+  verificationTokens VerificationToken[]
+  sentInvites  Invite[]     @relation("InvitedBy")
+  auditLogs     AuditLog[]
+  posts         Post[]
+  comments      PostComment[]
+  notifications Notification[]
+
+  @@index([email])
+}
+
+/// A null workspaceId means the membership is organization-wide.
+model Membership {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId         String    @db.Uuid
+  organizationId String    @db.Uuid
+  workspaceId    String?   @db.Uuid
+  role           Role
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId, workspaceId])
+  @@index([organizationId, deletedAt])
+  @@index([workspaceId, deletedAt])
+  @@index([userId])
+}
+
+/// Sessions are authoritative here rather than in a JWT, so they are listable
+/// in a "your devices" view and revocable immediately. Redis caches them with a
+/// short TTL; revocation deletes the row and busts the cache.
+model Session {
+  id         String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  ip         String?
+  userAgent  String?
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
+}
+
+/// Single-use. Accepting JOINS the existing organization; it never creates one.
+model Invite {
+  id             String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String       @db.Uuid
+  workspaceId    String?      @db.Uuid
+  email          String
+  role           Role
+  tokenHash      String       @unique
+  status         InviteStatus @default(PENDING)
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  invitedById    String       @db.Uuid
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  deletedAt      DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitedBy", fields: [invitedById], references: [id])
+
+  @@index([organizationId, status])
+  @@index([workspaceId, deletedAt])
+  @@index([email, status])
+}
+
+/// Admin actions are audited exactly like user actions — an audit trail with a
+/// hole where the most powerful actor stands is not an audit trail.
+///
+/// On workspace purge these rows are retained in MINIMISED form (actor, action,
+/// timestamp, no payload). A deletion record that deletes itself is not a record.
+model AuditLog {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String   @db.Uuid
+  workspaceId    String?  @db.Uuid
+  actorId        String?  @db.Uuid
+  action         String
+  entityType     String
+  entityId       String?
+  metadata       Json     @default("{}")
+  ip             String?
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workspace    Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  actor        User?        @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Infrastructure
+// ---------------------------------------------------------------------------
+
+/// Transactional outbox. The domain write and the outbox row commit together;
+/// a dispatcher drains them into BullMQ. This closes the "committed the post,
+/// crashed before enqueueing" window that would otherwise leave a SCHEDULED row
+/// nobody ever picks up.
+///
+/// Deliberately NOT tenant-scoped in the guard sense: the dispatcher is a system
+/// principal that must drain across all workspaces. workspaceId is carried so
+/// the consumer can establish tenancy context downstream.
+model Outbox {
+  id            String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String?     @db.Uuid
+  workspaceId   String?      @db.Uuid
+  aggregateType String
+  aggregateId   String
+  eventType     String
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  lastError     String?
+  createdAt     DateTime     @default(now())
+  dispatchedAt  DateTime?
+  nextRetryAt   DateTime?
+
+  @@index([status, createdAt])
+  @@index([aggregateType, aggregateId])
+}
+
+// ---------------------------------------------------------------------------
+// Connected social accounts
+// ---------------------------------------------------------------------------
+
+enum SocialAccountStatus {
+  ACTIVE
+  NEEDS_REAUTH
+  DISCONNECTED
+  DISABLED
+}
+
+/// A connected social account.
+///
+/// UNIQUENESS IS PER WORKSPACE, deliberately. Two workspaces may connect the
+/// same underlying Facebook Page — an agency and its client both doing so is
+/// normal, not an edge case. A global unique constraint would forbid the agency
+/// case outright, and inbound webhooks fan out to every workspace holding the
+/// account rather than resolving to one.
+model SocialAccount {
+  id                String              @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId       String              @db.Uuid
+  organizationId    String              @db.Uuid
+  provider          String
+  /// The platform's own identifier. Never conflated with `id`.
+  providerAccountId String
+  handle            String
+  displayName       String
+  avatarUrl         String?
+  /// Surfaces this account can post to (feed, reel, story, ...).
+  surfaces          String[]
+  /// Irreducibly provider-specific: Mastodon instance URL and its dynamically
+  /// registered client credentials, Facebook page id, IG business id, Telegram
+  /// chat id, Pinterest default board, YouTube channel id.
+  platformMeta      Json                @default("{}")
+  status            SocialAccountStatus @default(ACTIVE)
+  statusReason      String?
+  lastSyncedAt      DateTime?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  deletedAt         DateTime?
+
+  workspace  Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  credential OAuthCredential?
+  variants   PostVariant[]
+  metrics    AccountMetric[]
+  conversations Conversation[]
+
+  @@unique([workspaceId, provider, providerAccountId])
+  /// Non-unique on purpose: this is the inbound-webhook fan-out lookup.
+  @@index([provider, providerAccountId])
+  @@index([workspaceId, status, deletedAt])
+}
+
+/// OAuth credentials, encrypted at rest.
+///
+/// Separate from SocialAccount so the account row (history, attribution) can
+/// survive a disconnect while the credential is HARD-DELETED. A soft-deleted
+/// secret is still a secret sitting in the database.
+model OAuthCredential {
+  id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  socialAccountId String    @unique @db.Uuid
+  workspaceId     String    @db.Uuid
+  /// AES-256-GCM envelope ciphertext: { v, keyId, iv, tag, ciphertext }.
+  accessToken     String
+  refreshToken    String?
+  expiresAt       DateTime?
+  scopes          String[]
+  /// Which KEK wrapped this record's DEK, so rotation can find what to re-wrap.
+  keyId           String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([expiresAt])
+  @@index([keyId])
+}
+
+// ---------------------------------------------------------------------------
+// Content
+// ---------------------------------------------------------------------------
+
+/// AUTHORITATIVE state, written only by the publishing pipeline.
+enum VariantStatus {
+  DRAFT
+  SCHEDULED
+  QUEUED
+  PREPARING_MEDIA
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELLED
+  MISSED
+  NEEDS_REVIEW
+}
+
+/// DERIVED from the variants by a pure reducer — never written directly, except
+/// for PENDING_APPROVAL and APPROVED, which are editorial gates with no variant
+/// counterpart.
+enum PostStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  PARTIALLY_PUBLISHED
+  FAILED
+  CANCELLED
+  MISSED
+  NEEDS_REVIEW
+}
+
+enum PublishAttemptStatus {
+  IN_FLIGHT
+  SUCCEEDED
+  FAILED
+  RATE_LIMITED
+  RECONCILED
+}
+
+/// What the author wrote, once.
+model Post {
+  id             String     @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String     @db.Uuid
+  organizationId String     @db.Uuid
+  authorId       String?    @db.Uuid
+  status         PostStatus @default(DRAFT)
+  baseContent    String     @default("")
+  /// Absolute UTC. NEVER rewritten by a DST shift — only recurrence expansion
+  /// is zone-aware.
+  scheduledAt    DateTime?
+  /// IANA zone the author chose, kept alongside the absolute instant so the UI
+  /// can render it back in the zone they meant.
+  timezone       String     @default("UTC")
+  publishedAt    DateTime?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  deletedAt      DateTime?
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  author    User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  variants  PostVariant[]
+  media     PostMedia[]
+  approval  Approval?
+  comments  PostComment[]
+
+  @@index([workspaceId, status, scheduledAt])
+  @@index([workspaceId, deletedAt, createdAt])
+}
+
+/// One row per target account. The load-bearing table.
+///
+/// Rows rather than a JSON blob because partial failure is the NORMAL outcome —
+/// one channel accepts while another rejects an aspect ratio — and each channel
+/// must retry independently, be filterable, and carry its own idempotency key.
+model PostVariant {
+  id              String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  postId          String        @db.Uuid
+  workspaceId     String        @db.Uuid
+  organizationId  String        @db.Uuid
+  socialAccountId String        @db.Uuid
+  surface         String        @default("feed")
+  /// Null means inherit from the post.
+  contentOverride String?
+  /// Validated by a per-provider zod schema on write. Relational where we query,
+  /// JSON where the shape is genuinely open-ended per provider.
+  platformOptions Json          @default("{}")
+  status          VariantStatus @default(DRAFT)
+  attempts        Int           @default(0)
+  lastError       String?
+  lastErrorCode   String?
+  /// sha256(variantId || contentHash). Stable across retries.
+  idempotencyKey  String?
+  /// Mutation-tolerant, computed BEFORE publish. Providers rewrite what you send
+  /// — link shortening, unicode normalisation, truncation — so reconciliation
+  /// matches on a normalised subset, never on exact text.
+  fingerprint     String?
+  remoteId        String?
+  remoteUrl       String?
+  publishedAt     DateTime?
+  publishedLate   Boolean       @default(false)
+  latenessSeconds Int?
+  /// X charges per post and prices link posts far higher; shown before scheduling.
+  estimatedCostCents Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  post          Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  metrics       PostMetric[]
+  socialAccount SocialAccount    @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  publishAttempts PublishAttempt[]
+
+  @@unique([postId, socialAccountId, surface])
+  @@index([workspaceId, status])
+  @@index([status, postId])
+  @@index([socialAccountId, status])
+}
+
+/// Written BEFORE the provider call, in its own committed transaction.
+///
+/// A stale IN_FLIGHT row triggers RECONCILIATION rather than a blind retry: the
+/// post may have landed and the response been lost, and republishing is
+/// unrecoverable.
+model PublishAttempt {
+  id                 String               @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  postVariantId      String               @db.Uuid
+  workspaceId        String               @db.Uuid
+  idempotencyKey     String
+  status             PublishAttemptStatus @default(IN_FLIGHT)
+  startedAt          DateTime             @default(now())
+  finishedAt         DateTime?
+  providerRequestId  String?
+  providerResponseId String?
+  errorCode          String?
+  /// Fencing token from the per-account mutex. A holder whose lease expired
+  /// mid-call must not be able to write its result.
+  fenceToken         Int?
+
+  variant PostVariant @relation(fields: [postVariantId], references: [id], onDelete: Cascade)
+
+  @@index([status, startedAt])
+  @@index([postVariantId, startedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Analytics
+// ---------------------------------------------------------------------------
+
+/// Post-level metrics over time.
+///
+/// Typed columns are NULLABLE and that is semantic: the UI must distinguish
+/// "zero" from "this platform does not report this". Rendering "0 impressions"
+/// for a network that never reports impressions is worse than rendering "—".
+model PostMetric {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String   @db.Uuid
+  postVariantId  String   @db.Uuid
+  capturedAt     DateTime @default(now())
+  impressions    Int?
+  reach          Int?
+  views          Int?
+  likes          Int?
+  comments       Int?
+  shares         Int?
+  saves          Int?
+  clicks         Int?
+  videoViews     Int?
+  watchTimeMs    Int?
+  engagementRate Float?
+  /// The provider payload, verbatim. Nulled after 90 days by cleanup; the
+  /// normalized columns above are kept.
+  raw            Json?
+  source         String   @default("poll")
+
+  variant PostVariant @relation(fields: [postVariantId], references: [id], onDelete: Cascade)
+
+  @@index([postVariantId, capturedAt])
+  @@index([workspaceId, capturedAt])
+}
+
+/// Daily account snapshots — follower growth and posting volume.
+model AccountMetric {
+  id              String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId     String   @db.Uuid
+  socialAccountId String   @db.Uuid
+  capturedAt      DateTime @default(now())
+  followers       Int?
+  following       Int?
+  postCount       Int?
+  followerGrowth  Int?
+  raw             Json?
+
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+
+  @@index([socialAccountId, capturedAt])
+  @@index([workspaceId, capturedAt])
+}
+
+// ---------------------------------------------------------------------------
+// Media
+// ---------------------------------------------------------------------------
+
+model MediaAsset {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String    @db.Uuid
+  organizationId String    @db.Uuid
+  uploadedById   String?   @db.Uuid
+  /// Server-generated. A client filename is metadata and never touches a path.
+  storageKey     String    @unique
+  filename       String
+  mime           String
+  bytes          Int
+  width          Int?
+  height         Int?
+  durationMs     Int?
+  altText        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  renditions MediaRendition[]
+  postMedia PostMedia[]
+
+  @@index([workspaceId, deletedAt, createdAt])
+}
+
+/// Attaches media to a post, in order.
+model PostMedia {
+  id           String @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId  String @db.Uuid
+  postId       String @db.Uuid
+  mediaAssetId String @db.Uuid
+  position     Int    @default(0)
+  altText      String?
+
+  post  Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
+  media MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, mediaAssetId])
+  @@index([workspaceId])
+  @@index([postId, position])
+}
+
+// ---------------------------------------------------------------------------
+// Approvals and collaboration
+// ---------------------------------------------------------------------------
+
+enum ApprovalState {
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+enum ApprovalMode {
+  /// Any single approver can decide.
+  ANY
+  /// Every named approver must approve.
+  ALL
+}
+
+model Approval {
+  id            String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId   String        @db.Uuid
+  postId        String        @unique @db.Uuid
+  requestedById String        @db.Uuid
+  state         ApprovalState @default(PENDING)
+  mode          ApprovalMode  @default(ANY)
+  note          String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  decidedAt     DateTime?
+
+  post  Post           @relation(fields: [postId], references: [id], onDelete: Cascade)
+  steps ApprovalStep[]
+
+  @@index([workspaceId, state])
+}
+
+/// One approver's decision. Kept even after the approval resolves — an approval
+/// history that only records the final outcome cannot answer "who signed off".
+model ApprovalStep {
+  id          String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId String        @db.Uuid
+  approvalId  String        @db.Uuid
+  approverId  String        @db.Uuid
+  order       Int           @default(0)
+  decision    ApprovalState @default(PENDING)
+  note        String?
+  decidedAt   DateTime?
+  createdAt   DateTime      @default(now())
+
+  approval Approval @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+
+  @@unique([approvalId, approverId])
+  @@index([workspaceId, decision])
+}
+
+/// Threaded internal notes on a post. Never leaves the workspace.
+model PostComment {
+  id          String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId String    @db.Uuid
+  postId      String    @db.Uuid
+  authorId    String?   @db.Uuid
+  parentId    String?   @db.Uuid
+  body        String
+  mentions    String[]
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  deletedAt   DateTime?
+
+  post   Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent PostComment?  @relation("Thread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies PostComment[] @relation("Thread")
+
+  @@index([workspaceId, postId, createdAt])
+}
+
+/// In-app notifications.
+model Notification {
+  id          String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId String    @db.Uuid
+  userId      String    @db.Uuid
+  kind        String
+  title       String
+  body        String?
+  /// Deep link into the app, so a notification is actionable rather than a fact.
+  href        String?
+  readAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@index([workspaceId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Platform surface
+// ---------------------------------------------------------------------------
+
+/// Scoped API keys.
+///
+/// Only the HASH is stored; the secret is shown once at creation and never
+/// again. The prefix is kept separately so a person can tell two keys apart in
+/// a list without the secret being recoverable.
+model ApiKey {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String    @db.Uuid
+  organizationId String    @db.Uuid
+  name           String
+  keyHash        String    @unique
+  prefix         String
+  scopes         String[]
+  createdById    String?   @db.Uuid
+  lastUsedAt     DateTime?
+  expiresAt      DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([workspaceId, revokedAt])
+}
+
+/// Outbound webhook endpoint.
+model Webhook {
+  id                  String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId         String    @db.Uuid
+  organizationId      String    @db.Uuid
+  url                 String
+  events              String[]
+  /// Encrypted at rest like any other credential.
+  signingSecret       String
+  enabled             Boolean   @default(true)
+  consecutiveFailures Int       @default(0)
+  disabledAt          DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  deliveries WebhookDelivery[]
+
+  @@index([workspaceId, enabled])
+}
+
+/// Every attempt, kept. "Why did my endpoint not fire?" is unanswerable without
+/// a record of what we sent and what came back.
+model WebhookDelivery {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String    @db.Uuid
+  webhookId      String    @db.Uuid
+  eventType      String
+  payload        Json
+  attempt        Int       @default(1)
+  responseStatus Int?
+  responseBody   String?
+  deliveredAt    DateTime?
+  nextRetryAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, createdAt])
+  @@index([workspaceId, createdAt])
+  @@index([deliveredAt, nextRetryAt])
+}
+
+// ---------------------------------------------------------------------------
+// Link in bio
+// ---------------------------------------------------------------------------
+
+model LinkPage {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String    @db.Uuid
+  organizationId String    @db.Uuid
+  /// Globally unique: the public URL is /l/:slug, with no tenant in the path.
+  slug           String    @unique
+  title          String
+  bio            String?
+  avatarUrl      String?
+  theme          String    @default("default")
+  published      Boolean   @default(false)
+  views          Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  links Link[]
+
+  @@index([workspaceId, deletedAt])
+}
+
+model Link {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId String   @db.Uuid
+  linkPageId  String   @db.Uuid
+  label       String
+  url         String
+  position    Int      @default(0)
+  clicks      Int      @default(0)
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  page LinkPage @relation(fields: [linkPageId], references: [id], onDelete: Cascade)
+
+  @@index([linkPageId, position])
+  @@index([workspaceId])
+}
+
+// ---------------------------------------------------------------------------
+// RSS automation
+// ---------------------------------------------------------------------------
+
+model RSSFeed {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String    @db.Uuid
+  organizationId String    @db.Uuid
+  url            String
+  name           String
+  /// Accounts each new item is published to.
+  targetAccountIds String[]
+  /// Prefixed to the item title when composing.
+  template       String    @default("{{title}} {{link}}")
+  /// Items are created as drafts by default. Auto-publishing from a feed you do
+  /// not control is how someone else's headline ends up on your brand account.
+  autoPublish    Boolean   @default(false)
+  lastFetchedAt  DateTime?
+  lastItemGuid   String?
+  pausedAt       DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  items RSSItem[]
+
+  @@index([workspaceId, deletedAt])
+  @@index([pausedAt, lastFetchedAt])
+}
+
+/// Seen items, so a feed that re-orders or re-publishes cannot repost.
+model RSSItem {
+  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId String   @db.Uuid
+  feedId      String   @db.Uuid
+  guid        String
+  title       String
+  link        String
+  publishedAt DateTime?
+  postId      String?  @db.Uuid
+  createdAt   DateTime @default(now())
+
+  feed RSSFeed @relation(fields: [feedId], references: [id], onDelete: Cascade)
+
+  /// The dedupe key. A feed re-publishing an item with the same guid is the
+  /// normal case, not an edge case.
+  @@unique([feedId, guid])
+  @@index([workspaceId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Unified inbox
+// ---------------------------------------------------------------------------
+
+enum ConversationKind {
+  COMMENT_THREAD
+  DM
+  MENTION
+}
+
+enum ConversationStatus {
+  OPEN
+  SNOOZED
+  ARCHIVED
+}
+
+model Conversation {
+  id                     String             @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId            String             @db.Uuid
+  organizationId         String             @db.Uuid
+  socialAccountId        String             @db.Uuid
+  providerConversationId String
+  kind                   ConversationKind
+  subjectHandle          String
+  status                 ConversationStatus @default(OPEN)
+  assigneeId             String?            @db.Uuid
+  priority               Int                @default(0)
+  lastMessageAt          DateTime           @default(now())
+  unreadCount            Int                @default(0)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  socialAccount SocialAccount @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  messages      Message[]
+
+  @@unique([socialAccountId, providerConversationId])
+  @@index([workspaceId, status, lastMessageAt])
+  @@index([assigneeId, status])
+}
+
+model Message {
+  id                String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId       String   @db.Uuid
+  conversationId    String   @db.Uuid
+  providerMessageId String
+  /// IN from the audience, OUT from us.
+  direction         String
+  authorHandle      String
+  body              String
+  mediaUrls         String[]
+  /// ORDERING USES THIS, never arrival order — out-of-order webhook delivery is
+  /// expected, not exceptional.
+  providerCreatedAt DateTime
+  parentId          String?  @db.Uuid
+  raw               Json?
+  createdAt         DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, providerMessageId])
+  @@index([conversationId, providerCreatedAt])
+}
+
+/// Gap recovery. Webhooks lose events, so a slow poll fetches since the cursor
+/// and inserts whatever was missed — deduplicated by the same unique index.
+/// This is also the ONLY path for providers with no webhook support, so polling
+/// and webhooks converge on one write path rather than two.
+model SyncCursor {
+  id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId     String    @db.Uuid
+  socialAccountId String    @db.Uuid
+  resource        String
+  cursor          String?
+  lastSyncedAt    DateTime?
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([socialAccountId, resource])
+  @@index([workspaceId])
+}
+
+/// An inbound provider event, stored ONCE and fanned out.
+///
+/// Because SocialAccount uniqueness is per workspace, one provider event can be
+/// relevant to several workspaces — the agency case. Storing the payload once
+/// and fanning out to delivery rows keeps a single copy of the data, gives each
+/// workspace its own processing state, and makes multi-routed events visible in
+/// admin rather than looking like duplicates.
+model InboundEvent {
+  id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  provider        String
+  providerEventId String?
+  contentHash     String
+  signatureValid  Boolean   @default(false)
+  payload         Json
+  receivedAt      DateTime  @default(now())
+  processedAt     DateTime?
+
+  deliveries InboundEventDelivery[]
+
+  @@unique([provider, providerEventId])
+  @@unique([provider, contentHash])
+  @@index([receivedAt])
+}
+
+model InboundEventDelivery {
+  id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  inboundEventId  String    @db.Uuid
+  workspaceId     String    @db.Uuid
+  socialAccountId String    @db.Uuid
+  status          String    @default("PENDING")
+  error           String?
+  processedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  event InboundEvent @relation(fields: [inboundEventId], references: [id], onDelete: Cascade)
+
+  @@unique([inboundEventId, workspaceId])
+  @@index([workspaceId, status])
+}
+
+/// Events matching no connected account. Dropped, never guessed at, never
+/// broadcast, never attached to the nearest plausible workspace. Volume is an
+/// admin metric — a sustained rise means a stale subscription needs cleaning up.
+model UnroutedInboundEvent {
+  id                String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  provider          String
+  providerAccountId String?
+  payload           Json
+  receivedAt        DateTime @default(now())
+
+  @@index([receivedAt])
+}
+
+/// A single-use, time-limited token for password reset and email verification.
+///
+/// The token is stored HASHED, exactly like a session id or an API key. A
+/// database leak that hands out working password-reset links is the same breach
+/// as one that hands out passwords, and there is no reason to hold the plaintext
+/// once it has been sent.
+///
+/// Not tenant-scoped: it belongs to a USER, who exists before any workspace and
+/// may belong to several.
+model VerificationToken {
+  id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId    String   @db.Uuid
+  /// sha256 of the token that was sent. Never the token itself.
+  tokenHash String   @unique
+  purpose   String
+  expiresAt DateTime
+  /// Set the moment it is spent, so a replay is refused rather than honoured.
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@index([expiresAt])
+}
+
+/// A re-encoded copy of a MediaAsset, conforming to one provider surface.
+///
+/// Cached on (assetId, providerId, surface) rather than on the post. The same
+/// video going to Instagram Reels from four different posts is ONE transcode —
+/// a key that included the post would redo it every time, which for a
+/// two-minute encode is the difference between a usable tool and an unusable
+/// one.
+model MediaRendition {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String   @db.Uuid
+  organizationId String   @db.Uuid
+  mediaAssetId   String   @db.Uuid
+  providerId     String
+  surface        String
+  storageKey     String   @unique
+  mime           String
+  bytes          Int
+  /// What was changed and why, shown while the variant sits in PREPARING_MEDIA.
+  reasons        String[]
+  createdAt      DateTime @default(now())
+
+  asset MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+
+  @@unique([mediaAssetId, providerId, surface])
+  @@index([workspaceId])
+}
