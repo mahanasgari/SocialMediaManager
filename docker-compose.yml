@@ -1,0 +1,186 @@
+# Self-hosted stack. `docker compose up -d` from a clean clone with .env filled in.
+#
+# The `migrate` one-shot runs to completion before api/worker/web start, so a
+# first boot is one command and a schema change cannot race the processes that
+# depend on it.
+#
+# Nothing here has a default password. A compose file that boots with
+# POSTGRES_PASSWORD=smm is a compose file somebody deploys to a VPS unchanged,
+# and the failure is silent until it is not.
+name: smm
+
+x-logging: &logging
+  driver: json-file
+  options:
+    # Unbounded container logs fill the host disk, at which point every service
+    # fails at once for a reason that has nothing to do with any of them.
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-smm}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published. The application reaches it over the compose network; a
+    # published 5432 is the single most common way a self-hosted database ends
+    # up on the public internet.
+    restart: unless-stopped
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}"]
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "$${REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:?set S3_ACCESS_KEY_ID in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set S3_SECRET_ACCESS_KEY in .env}
+    volumes: ["minio-data:/data"]
+    # Ports are NOT published by default.
+    #
+    # Publish 9000 only if MEDIA_PUBLIC_MODE=presigned-s3, which requires the
+    # platform to reach storage directly. With the default `relay` mode the API
+    # streams objects itself and storage stays private — see SECURITY.md.
+    #
+    #   ports: ["9000:9000"]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *logging
+
+  # One-shot. Creates the media bucket if absent; exits 0.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 $${S3_ACCESS_KEY_ID} $${S3_SECRET_ACCESS_KEY} &&
+      mc mb --ignore-existing local/$${S3_BUCKET} &&
+      echo 'bucket ready'"
+    env_file: [.env]
+    logging: *logging
+
+  # One-shot. Applies migrations as the database OWNER, then provisions the
+  # unprivileged role the application connects as.
+  #
+  # The split is load-bearing, not tidiness: a superuser bypasses row-level
+  # security unconditionally, and FORCE ROW LEVEL SECURITY does not change that.
+  # An application connected as POSTGRES_USER would ignore every tenant
+  # isolation policy while pg_policies still listed them all correctly.
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: migrate
+    env_file: [.env]
+    environment:
+      MIGRATE_DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-smm}
+      APP_DB_USER: ${APP_DB_USER:-smm_app_user}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+    logging: *logging
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: api
+    env_file: [.env]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3001/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # Longer than SHUTDOWN_GRACE_MS so the drain in main.ts can finish before
+    # Compose escalates to SIGKILL. Set below that and every deploy is a hard
+    # kill, which makes the graceful shutdown decorative.
+    stop_grace_period: 20s
+    restart: unless-stopped
+    logging: *logging
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: worker
+    env_file: [.env]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    # A publish already in flight is finished before exit. Anything still
+    # running past this is recovered by the write-ahead attempt row on restart.
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *logging
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: web
+      args:
+        # Baked into the build: the /api/* rewrite is resolved at build time.
+        # This is the single-origin invariant — the browser must only ever see
+        # one host. See apps/web/next.config.mjs and SECURITY.md section 3.
+        INTERNAL_API_URL: http://api:3001
+    env_file: [.env]
+    # The ONLY published port. Put a TLS-terminating reverse proxy in front of
+    # it for anything reachable from outside a trusted network: without https
+    # the session cookie loses Secure and the __Host- prefix, and the API says
+    # so loudly at boot.
+    ports: ["${WEB_PORT:-3000}:3000"]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    stop_grace_period: 15s
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
