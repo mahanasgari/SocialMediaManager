@@ -1,0 +1,39 @@
+# Dependencies and build output
+node_modules/
+dist/
+.next/
+.turbo/
+out/
+*.tsbuildinfo
+
+# Generated. `prisma generate` recreates this from the schema; committing it
+# means a stale client can win over the schema it claims to match.
+packages/database/generated/
+
+# Secrets.
+#
+# Deliberately broad: `.env*` with a single exception, rather than a list of
+# known filenames. A list only protects the names somebody thought of, and the
+# first .env.production or .env.staging anyone creates is not on it.
+.env*
+!.env.example
+
+# Test and coverage artefacts
+coverage/
+test-results/
+playwright-report/
+.nyc_output/
+
+# Local runtime
+*.log
+docker/volumes/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Session notes, not project history
+.remember/
