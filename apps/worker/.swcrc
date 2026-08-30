@@ -1,0 +1,13 @@
+{
+  "$schema": "https://swc.rs/schema.json",
+  "jsc": {
+    "parser": { "syntax": "typescript", "decorators": true },
+    "target": "es2022",
+    "transform": {
+      "legacyDecorator": true,
+      "_comment": "decoratorMetadata is what NestJS dependency injection needs to resolve constructor parameter types. esbuild does not emit it, which is why tsx cannot run this app.",
+      "decoratorMetadata": true
+    }
+  },
+  "module": { "type": "nodenext" }
+}
