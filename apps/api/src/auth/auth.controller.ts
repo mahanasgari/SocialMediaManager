@@ -8,6 +8,7 @@ import { Public } from './auth-mode.guard.js'
 import { CurrentUser } from './current-user.js'
 import { AuthService } from './auth.service.js'
 import { SessionService, type SessionPrincipal } from './session.service.js'
+import { AttemptLimiter, DEFAULT_ACCOUNT_POLICY, DEFAULT_IP_POLICY } from '@smm/ratelimit'
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -38,7 +39,8 @@ function parse<T>(schema: z.ZodType<T>, body: unknown): T {
 export class AuthController {
   constructor(
     private readonly auth: AuthService,
-    private readonly sessions: SessionService
+    private readonly sessions: SessionService,
+    private readonly attempts: AttemptLimiter
   ) {}
 
   @Public()
@@ -65,11 +67,37 @@ export class AuthController {
     @Res({ passthrough: true }) reply: FastifyReply
   ) {
     const input = parse(loginSchema, body)
+    const ip = clientIp(request)
+
+    // Checked BEFORE the password is verified.
+    //
+    // Argon2id makes each guess expensive, which is the point — but that also
+    // means a few hundred concurrent attempts saturate the CPU and take the
+    // application down as a side effect. Rejecting here, before any hashing
+    // happens, is what prevents the guessing AND the denial of service.
+    const account = await this.attempts.consume('login', input.email, DEFAULT_ACCOUNT_POLICY)
+    if (!account.allowed) throw errors.tooManyAttempts(account.retryAfterSeconds)
+
+    const source = await this.attempts.consume('login-ip', ip, DEFAULT_IP_POLICY)
+    if (!source.allowed) throw errors.tooManyAttempts(source.retryAfterSeconds)
+
     const result = await this.auth.verifyCredentials(input)
 
-    // One message for both "no such account" and "wrong password". Telling them
-    // apart would make login an account-enumeration oracle.
-    if (!result) throw errors.unauthenticated('That email address and password do not match.')
+    if (!result) {
+      // Nothing to record: the attempt was already consumed above. Counting on
+      // the way IN rather than on failure is what makes the limit hold under
+      // concurrent requests — see AttemptLimiter.
+      //
+      // One message for both "no such account" and "wrong password", and the
+      // SAME message whether or not attempts remain. Saying "3 tries left"
+      // would confirm the address exists, turning the lockout into the
+      // enumeration oracle the shared message exists to prevent.
+      throw errors.unauthenticated('That email address and password do not match.')
+    }
+
+    // Cleared on success, so someone who mistypes twice a day is not eventually
+    // locked out by an accumulation of failures they already recovered from.
+    await this.attempts.succeed('login', input.email)
 
     await this.startSession(result.userId, request, reply)
     return { userId: result.userId }
@@ -141,4 +169,16 @@ export class AuthController {
       expires: expiresAt,
     })
   }
+}
+
+/**
+ * The client address, for rate limiting.
+ *
+ * Fastify is configured with trustProxy, so `request.ip` already resolves
+ * X-Forwarded-For against the trusted hop rather than taking the header at face
+ * value. Reading the raw header here instead would let anyone set their own
+ * rate-limit key and bypass the limit entirely by varying it.
+ */
+function clientIp(request: FastifyRequest): string {
+  return request.ip || 'unknown'
 }

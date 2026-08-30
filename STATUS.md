@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1023 tests passing, 0 failing. Type-check, lint and the evidence-citation gate
+**1034 tests passing, 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -125,6 +125,33 @@ two workspaces produced **one stored payload and two deliveries**, each with its
 own processing state. Events matching no account are recorded as unrouted and
 **dropped**.
 
+### Brute-force defence
+
+`POST /auth/login` had no rate limiting and no lockout — it accepted unlimited
+password guesses. Argon2id makes each guess expensive, which helps, but is not a
+substitute: it also means a few hundred concurrent attempts saturate the CPU and
+take the application down as a side effect.
+
+Attempts are now consumed BEFORE the password is verified, on two keys at once:
+
+| Key | Limit | Defends |
+|---|---|---|
+| Account | 8 per 15 min | one address ground down from many hosts |
+| IP | 40 per 15 min | one guess sprayed across many accounts from one host |
+
+Either limit alone leaves the other attack completely open. The IP limit is
+looser because an office behind one NAT address is a legitimate source of many
+sign-ins, and locking them all out is its own outage.
+
+Verified live: eight attempts return 401, the ninth returns 429, the correct
+password is refused while locked, a different account is unaffected, and the
+message never reveals whether the address exists.
+
+A concurrency test caught a real flaw in the first version. Check-then-record is
+two round trips, so twenty simultaneous requests each read a count below the
+limit and **all twenty passed** — precisely the shape of the attack. Consuming
+on the way in, in one round trip, is what makes the limit hold.
+
 ### Account recovery
 
 Password reset, email confirmation, and signed-in password change. Verified end
@@ -233,13 +260,13 @@ Named plainly so nobody goes looking.
 
 | | |
 |---|---|
-| **Transcoding** | No ffmpeg. Media is validated and stored, never re-encoded. Instagram Reels profiles are declared and enforced at validation, but nothing produces a conforming file. |
 | **Reddit anchor** | Phase 7 analytics gate. Skeleton only. |
 | **Entitlements, feature flags** | Architecture only. |
 | **Campaigns, labels, templates, UTM builder** | Phase 8. Not started. |
-| **Purge job, retention, export jobs** | Phase 9. Soft-delete works; nothing reaps. |
+| **Export jobs** | Phase 9. Per-workspace and per-subject export are specified, not built. Purge and retention ARE built — see above. |
 | **22 remaining connectors** | Documented skeletons, disabled with a stated reason. |
-| **E2E suite** | Playwright is planned, not written. The flows above were verified by hand against the running stack. |
+| **E2E suite** | Playwright is planned, not written. Every flow above was verified by hand against the running stack, which does not survive a refactor. |
+| **Compose stack** | The images build and each process runs, but the containers have not been run together. Blocked on host disk space, not on code. |
 
 ### Deliberately excluded, permanently
 

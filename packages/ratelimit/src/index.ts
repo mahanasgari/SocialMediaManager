@@ -1,3 +1,5 @@
 export { RateLimiter, AccountMutex } from './bucket.js'
 export type { BudgetSpec, AcquireResult, OperationClass, BudgetScope } from './bucket.js'
 export { ACQUIRE, REFUND, PENALISE, RECOVER } from './scripts.js'
+export { AttemptLimiter, DEFAULT_ACCOUNT_POLICY, DEFAULT_IP_POLICY } from './attempts.js'
+export type { AttemptVerdict, AttemptPolicy } from './attempts.js'

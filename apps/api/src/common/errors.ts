@@ -124,6 +124,23 @@ export const errors = {
     }),
 
   /**
+   * Too many failed sign-in attempts.
+   *
+   * Deliberately does NOT say how many remain, or whether the account exists.
+   * "3 attempts left for this account" confirms the address is real, which
+   * turns the lockout into exactly the enumeration oracle that the shared
+   * "email and password do not match" message exists to prevent.
+   */
+  tooManyAttempts: (retryAfterSeconds: number) =>
+    new AppError({
+      status: 429,
+      code: 'too_many_attempts',
+      message:
+        'Too many sign-in attempts. Wait a few minutes and try again, or reset your password.',
+      details: { retryAfterSeconds },
+    }),
+
+  /**
    * A 429 carrying the PROVIDER's own explanation rather than a generic one.
    *
    * Separate from rateLimited because the two have different causes and

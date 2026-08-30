@@ -6,6 +6,9 @@ import { SessionGuard } from './auth/session.guard.js'
 import { AuthController } from './auth/auth.controller.js'
 import { RecoveryController } from './auth/recovery.controller.js'
 import { RecoveryService } from './auth/recovery.service.js'
+import { AttemptLimiter } from '@smm/ratelimit'
+import { Redis } from 'ioredis'
+import { loadEnv } from '@smm/config'
 import { AuthService } from './auth/auth.service.js'
 import { SessionService } from './auth/session.service.js'
 import { ApiKeyService } from './auth/api-key.service.js'
@@ -68,6 +71,13 @@ import { HealthController } from './health/health.controller.js'
     { provide: APP_GUARD, useClass: SessionGuard },
     AuthService,
     RecoveryService,
+    {
+      // One Redis connection for the limiter, shared across requests. A
+      // connection per request would exhaust the pool under exactly the load
+      // this is meant to survive.
+      provide: AttemptLimiter,
+      useFactory: () => new AttemptLimiter(new Redis(loadEnv().REDIS_URL)),
+    },
     SessionService,
     ApiKeyService,
     MembershipService,
