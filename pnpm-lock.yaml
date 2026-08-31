@@ -62,6 +62,9 @@ importers:
       '@smm/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@smm/content':
+        specifier: workspace:*
+        version: link:../../packages/content
       '@smm/database':
         specifier: workspace:*
         version: link:../../packages/database
@@ -222,8 +225,6 @@ importers:
         specifier: ^1.10.1
         version: 1.16.1
 
-  packages/analytics: {}
-
   packages/auth:
     dependencies:
       '@node-rs/argon2':
@@ -238,6 +239,8 @@ importers:
       zod:
         specifier: ^3.23.8
         version: 3.25.76
+
+  packages/content: {}
 
   packages/database:
     dependencies:
@@ -279,8 +282,6 @@ importers:
         specifier: workspace:*
         version: link:../providers
 
-  packages/notifications: {}
-
   packages/providers:
     dependencies:
       '@smm/config':
@@ -313,8 +314,6 @@ importers:
       ioredis:
         specifier: ^5.4.1
         version: 5.11.1
-
-  packages/social: {}
 
   packages/storage:
     dependencies:

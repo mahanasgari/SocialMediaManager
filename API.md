@@ -161,6 +161,18 @@ Base: `/api/v1`
 Endpoints for a capability the provider lacks return `422 capability_unsupported` with the provider named. The UI should never call them, because it renders from the capability matrix — but the API refuses regardless.
 
 ### Analytics and reports
+### Organisation
+
+| Route | Notes |
+|---|---|
+| `GET/POST /campaigns`, `PATCH/DELETE /campaigns/:id` | Deleting keeps the posts — the response reports how many were ungrouped |
+| `GET/POST /labels`, `DELETE /labels/:id` | |
+| `POST /posts/:id/labels` | Replaces the set, so removal is expressible. Label ids are checked against the workspace first: a join row carrying our `workspaceId` but pointing at another tenant's label would pass RLS while dangling |
+| `GET/POST/PATCH/DELETE /templates` | `variables` is derived from the body on write |
+| `POST /templates/:id/render` | Returns `{ text, missing, unused }`. `commit: true` counts a use, and only when nothing is missing — counting previews would make the ordering measure typing |
+| `GET/POST/DELETE /utm-presets` | One default per workspace, cleared and set in one transaction |
+| `POST /utm-presets/:id/apply` | Returns the tagged text, the count, and every link it skipped with the reason |
+
 `/analytics/overview`, `/analytics/posts`, `/analytics/accounts`, `/analytics/audience`, `/analytics/campaigns` — all served from `AnalyticsSnapshot`, never live provider calls.
 
 `/reports`, `/reports/:id/run`, `/reports/:id/export?format=pdf|csv`.

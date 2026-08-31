@@ -90,13 +90,18 @@ model Workspace {
   /// Set when soft-deleted. Surfaced in the UI as a real date, never "soon".
   purgeAt        DateTime?
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   memberships    Membership[]
   invites        Invite[]
   auditLogs      AuditLog[]
   socialAccounts SocialAccount[]
   posts          Post[]
   media          MediaAsset[]
+
+  campaigns  Campaign[]
+  labels     Label[]
+  templates  Template[]
+  utmPresets UtmPreset[]
 
   @@unique([organizationId, slug])
   @@index([organizationId, deletedAt])
@@ -117,14 +122,16 @@ model User {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  memberships  Membership[]
-  sessions     Session[]
+  memberships        Membership[]
+  sessions           Session[]
   verificationTokens VerificationToken[]
-  sentInvites  Invite[]     @relation("InvitedBy")
-  auditLogs     AuditLog[]
-  posts         Post[]
-  comments      PostComment[]
-  notifications Notification[]
+  sentInvites        Invite[]            @relation("InvitedBy")
+  auditLogs          AuditLog[]
+  posts              Post[]
+  comments           PostComment[]
+  notifications      Notification[]
+
+  createdTemplates Template[]
 
   @@index([email])
 }
@@ -234,19 +241,19 @@ model AuditLog {
 /// principal that must drain across all workspaces. workspaceId is carried so
 /// the consumer can establish tenancy context downstream.
 model Outbox {
-  id            String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  organizationId String?     @db.Uuid
-  workspaceId   String?      @db.Uuid
-  aggregateType String
-  aggregateId   String
-  eventType     String
-  payload       Json
-  status        OutboxStatus @default(PENDING)
-  attempts      Int          @default(0)
-  lastError     String?
-  createdAt     DateTime     @default(now())
-  dispatchedAt  DateTime?
-  nextRetryAt   DateTime?
+  id             String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  organizationId String?      @db.Uuid
+  workspaceId    String?      @db.Uuid
+  aggregateType  String
+  aggregateId    String
+  eventType      String
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attempts       Int          @default(0)
+  lastError      String?
+  createdAt      DateTime     @default(now())
+  dispatchedAt   DateTime?
+  nextRetryAt    DateTime?
 
   @@index([status, createdAt])
   @@index([aggregateType, aggregateId])
@@ -293,10 +300,10 @@ model SocialAccount {
   updatedAt         DateTime            @updatedAt
   deletedAt         DateTime?
 
-  workspace  Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  credential OAuthCredential?
-  variants   PostVariant[]
-  metrics    AccountMetric[]
+  workspace     Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  credential    OAuthCredential?
+  variants      PostVariant[]
+  metrics       AccountMetric[]
   conversations Conversation[]
 
   @@unique([workspaceId, provider, providerAccountId])
@@ -393,15 +400,23 @@ model Post {
   updatedAt      DateTime   @updatedAt
   deletedAt      DateTime?
 
+  /// SetNull, not Cascade. Deleting a campaign must not delete a quarter of
+  /// published history along with it — the posts went out and their metrics are
+  /// real whether or not the campaign that grouped them still exists.
+  campaignId String? @db.Uuid
+
   workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   author    User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  campaign  Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
   variants  PostVariant[]
   media     PostMedia[]
   approval  Approval?
   comments  PostComment[]
+  labels    PostLabel[]
 
   @@index([workspaceId, status, scheduledAt])
   @@index([workspaceId, deletedAt, createdAt])
+  @@index([workspaceId, campaignId])
 }
 
 /// One row per target account. The load-bearing table.
@@ -410,40 +425,40 @@ model Post {
 /// one channel accepts while another rejects an aspect ratio — and each channel
 /// must retry independently, be filterable, and carry its own idempotency key.
 model PostVariant {
-  id              String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  postId          String        @db.Uuid
-  workspaceId     String        @db.Uuid
-  organizationId  String        @db.Uuid
-  socialAccountId String        @db.Uuid
-  surface         String        @default("feed")
+  id                 String        @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  postId             String        @db.Uuid
+  workspaceId        String        @db.Uuid
+  organizationId     String        @db.Uuid
+  socialAccountId    String        @db.Uuid
+  surface            String        @default("feed")
   /// Null means inherit from the post.
-  contentOverride String?
+  contentOverride    String?
   /// Validated by a per-provider zod schema on write. Relational where we query,
   /// JSON where the shape is genuinely open-ended per provider.
-  platformOptions Json          @default("{}")
-  status          VariantStatus @default(DRAFT)
-  attempts        Int           @default(0)
-  lastError       String?
-  lastErrorCode   String?
+  platformOptions    Json          @default("{}")
+  status             VariantStatus @default(DRAFT)
+  attempts           Int           @default(0)
+  lastError          String?
+  lastErrorCode      String?
   /// sha256(variantId || contentHash). Stable across retries.
-  idempotencyKey  String?
+  idempotencyKey     String?
   /// Mutation-tolerant, computed BEFORE publish. Providers rewrite what you send
   /// — link shortening, unicode normalisation, truncation — so reconciliation
   /// matches on a normalised subset, never on exact text.
-  fingerprint     String?
-  remoteId        String?
-  remoteUrl       String?
-  publishedAt     DateTime?
-  publishedLate   Boolean       @default(false)
-  latenessSeconds Int?
+  fingerprint        String?
+  remoteId           String?
+  remoteUrl          String?
+  publishedAt        DateTime?
+  publishedLate      Boolean       @default(false)
+  latenessSeconds    Int?
   /// X charges per post and prices link posts far higher; shown before scheduling.
   estimatedCostCents Int?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
-  post          Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
-  metrics       PostMetric[]
-  socialAccount SocialAccount    @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  post            Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  metrics         PostMetric[]
+  socialAccount   SocialAccount    @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
   publishAttempts PublishAttempt[]
 
   @@unique([postId, socialAccountId, surface])
@@ -554,20 +569,20 @@ model MediaAsset {
   updatedAt      DateTime  @updatedAt
   deletedAt      DateTime?
 
-  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace  Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   renditions MediaRendition[]
-  postMedia PostMedia[]
+  postMedia  PostMedia[]
 
   @@index([workspaceId, deletedAt, createdAt])
 }
 
 /// Attaches media to a post, in order.
 model PostMedia {
-  id           String @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  workspaceId  String @db.Uuid
-  postId       String @db.Uuid
-  mediaAssetId String @db.Uuid
-  position     Int    @default(0)
+  id           String  @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId  String  @db.Uuid
+  postId       String  @db.Uuid
+  mediaAssetId String  @db.Uuid
+  position     Int     @default(0)
   altText      String?
 
   post  Post       @relation(fields: [postId], references: [id], onDelete: Cascade)
@@ -646,9 +661,9 @@ model PostComment {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  post   Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
-  author User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
-  parent PostComment?  @relation("Thread", fields: [parentId], references: [id], onDelete: Cascade)
+  post    Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  author  User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  parent  PostComment?  @relation("Thread", fields: [parentId], references: [id], onDelete: Cascade)
   replies PostComment[] @relation("Thread")
 
   @@index([workspaceId, postId, createdAt])
@@ -788,24 +803,24 @@ model Link {
 // ---------------------------------------------------------------------------
 
 model RSSFeed {
-  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  workspaceId    String    @db.Uuid
-  organizationId String    @db.Uuid
-  url            String
-  name           String
+  id               String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId      String    @db.Uuid
+  organizationId   String    @db.Uuid
+  url              String
+  name             String
   /// Accounts each new item is published to.
   targetAccountIds String[]
   /// Prefixed to the item title when composing.
-  template       String    @default("{{title}} {{link}}")
+  template         String    @default("{{title}} {{link}}")
   /// Items are created as drafts by default. Auto-publishing from a feed you do
   /// not control is how someone else's headline ends up on your brand account.
-  autoPublish    Boolean   @default(false)
-  lastFetchedAt  DateTime?
-  lastItemGuid   String?
-  pausedAt       DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
-  deletedAt      DateTime?
+  autoPublish      Boolean   @default(false)
+  lastFetchedAt    DateTime?
+  lastItemGuid     String?
+  pausedAt         DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
 
   items RSSItem[]
 
@@ -815,15 +830,15 @@ model RSSFeed {
 
 /// Seen items, so a feed that re-orders or re-publishes cannot repost.
 model RSSItem {
-  id          String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  workspaceId String   @db.Uuid
-  feedId      String   @db.Uuid
+  id          String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId String    @db.Uuid
+  feedId      String    @db.Uuid
   guid        String
   title       String
   link        String
   publishedAt DateTime?
-  postId      String?  @db.Uuid
-  createdAt   DateTime @default(now())
+  postId      String?   @db.Uuid
+  createdAt   DateTime  @default(now())
 
   feed RSSFeed @relation(fields: [feedId], references: [id], onDelete: Cascade)
 
@@ -976,15 +991,15 @@ model UnroutedInboundEvent {
 /// Not tenant-scoped: it belongs to a USER, who exists before any workspace and
 /// may belong to several.
 model VerificationToken {
-  id        String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
-  userId    String   @db.Uuid
+  id        String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  userId    String    @db.Uuid
   /// sha256 of the token that was sent. Never the token itself.
-  tokenHash String   @unique
+  tokenHash String    @unique
   purpose   String
   expiresAt DateTime
   /// Set the moment it is spent, so a replay is refused rather than honoured.
   usedAt    DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1017,4 +1032,131 @@ model MediaRendition {
 
   @@unique([mediaAssetId, providerId, surface])
   @@index([workspaceId])
+}
+
+// ---------------------------------------------------------------------------
+// Organisation — campaigns, labels, templates, UTM presets
+// ---------------------------------------------------------------------------
+
+/// A named grouping of posts, with dates.
+///
+/// The dates are DESCRIPTIVE, not enforcing. A campaign that ran 1–14 August
+/// does not stop you attaching a post from the 15th, because that is exactly
+/// what a follow-up is, and a tool that refuses it teaches people to keep the
+/// real dates in a spreadsheet instead.
+model Campaign {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String    @db.Uuid
+  organizationId String    @db.Uuid
+  name           String
+  description    String?
+  /// A hex colour so the calendar can band a campaign at a glance.
+  color          String    @default("#6366f1")
+  startsAt       DateTime?
+  endsAt         DateTime?
+  /// Archived rather than deleted: a finished campaign still owns its history.
+  archived       Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  posts     Post[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, archived, deletedAt])
+}
+
+/// A free-form tag on a post.
+///
+/// Separate from campaigns on purpose. A post belongs to ONE campaign and any
+/// number of labels, because "which initiative was this part of" and "what kind
+/// of thing is it" are different questions. Collapsing them into one tag system
+/// is why tag lists become unusable after a year.
+model Label {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String   @db.Uuid
+  organizationId String   @db.Uuid
+  name           String
+  color          String   @default("#64748b")
+  createdAt      DateTime @default(now())
+
+  workspace Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  posts     PostLabel[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+/// Join row. Cascades from both sides — it carries no meaning of its own.
+model PostLabel {
+  postId      String   @db.Uuid
+  labelId     String   @db.Uuid
+  workspaceId String   @db.Uuid
+  createdAt   DateTime @default(now())
+
+  post  Post  @relation(fields: [postId], references: [id], onDelete: Cascade)
+  label Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@id([postId, labelId])
+  @@index([workspaceId, labelId])
+}
+
+/// Reusable content with {{variables}}.
+///
+/// The body is stored EXACTLY as written, placeholders intact. Rendering
+/// happens at use time against values the author supplies, and a template with
+/// unfilled variables is refused rather than published with holes in it — see
+/// packages/content/src/template.ts for why neither obvious fallback is safe.
+model Template {
+  id             String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String    @db.Uuid
+  organizationId String    @db.Uuid
+  name           String
+  description    String?
+  body           String
+  /// Denormalised from the body on write, so listing templates does not mean
+  /// parsing every one of them. Rewritten whenever the body changes.
+  variables      String[]  @default([])
+  createdById    String?   @db.Uuid
+  /// Incremented when a template is used. Sorts the list by what people
+  /// actually reach for rather than by what was made most recently.
+  usageCount     Int       @default(0)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, deletedAt, usageCount])
+}
+
+/// A saved set of UTM parameters, each value itself templatable.
+///
+/// source and medium are required because a UTM tag missing either is not
+/// usable in any analytics tool worth the name — it lands in the "(not set)"
+/// bucket, which is where attribution goes to die.
+model UtmPreset {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String   @db.Uuid
+  organizationId String   @db.Uuid
+  name           String
+  source         String
+  medium         String
+  campaign       String?
+  term           String?
+  content        String?
+  /// At most one per workspace, enforced in the service rather than by a
+  /// partial unique index, because clearing the old default and setting the new
+  /// one has to happen in one transaction either way.
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, isDefault])
 }

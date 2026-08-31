@@ -10,6 +10,7 @@ import {
   Link2,
   PenSquare,
   Plug,
+  Tags,
   Settings,
   ShieldCheck,
   Users,
@@ -43,6 +44,7 @@ const GROUPS: Array<{ label: string; items: Item[] }> = [
       { href: 'calendar', label: 'Calendar', icon: CalendarDays },
       { href: 'posts', label: 'Posts', icon: FileText },
       { href: 'media', label: 'Media', icon: ImageIcon },
+      { href: 'organise', label: 'Organise', icon: Tags },
     ],
   },
   {

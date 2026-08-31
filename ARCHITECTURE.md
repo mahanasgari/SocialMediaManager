@@ -70,6 +70,7 @@ packages/
   storage/        S3 abstraction, signed URLs, media relay, upload validation
   publishing/     State machine, status reducer, orchestration, idempotency, reconciliation
   ui/             shadcn-based shared components
+  content/        Template variables and UTM tagging — pure, browser-importable
   config/         zod env schema, shared tsconfig and eslint, feature flags
 ```
 
@@ -87,7 +88,10 @@ named after a major subsystem reads as "packaged, not yet filled in" to everyone
 who was not there, which is a claim about the architecture that is not true.
 
 If a second consumer appears — a second process that must normalise metrics, say
-— that is when the package earns its place.
+— that is when the package earns its place. `content` is what that looks like:
+the composer previews a rendered template and a tagged URL, the API writes them,
+and a preview computed by different code from the thing it previews is not a
+preview.
 
 ### Dependency rules — enforced by ESLint, failing CI
 

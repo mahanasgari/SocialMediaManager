@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1044 unit and integration tests, plus 20 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1088 unit and integration tests, plus 26 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -145,6 +145,55 @@ They cover sign-in and its guards, all fifteen sections rendering, the sidebar
 marking the right section, compose validation against the real capability
 matrix, publishing and drafting, and the connector honesty policy — including
 that a skeleton is refused server-side, not merely disabled in the UI.
+
+### Organising content
+
+Campaigns, labels, templates and UTM presets — Phase 8, at `/w/:id/organise`.
+
+**Campaigns and labels answer different questions**, so they are different
+things rather than one tag system. A post belongs to at most one campaign (which
+initiative was this part of) and any number of labels (what kind of thing is
+it). Collapsing them is why tag lists are unusable after a year. Campaign dates
+are descriptive, not enforcing: a campaign that ran 1–14 August still accepts a
+post from the 15th, because that is what a follow-up is, and a tool that refuses
+it teaches people to keep the real dates in a spreadsheet.
+
+Deleting a campaign keeps its posts — the foreign key is `SetNull`, and the
+confirmation says so before you click rather than after.
+
+**Templates report what is missing rather than guessing.** Two obvious
+behaviours are both wrong. Leaving `{{first_name}}` in the output publishes it
+to a public timeline, which is the mail-merge failure everyone has seen. Blanking
+it publishes "Hi , thanks for following", which is the same failure with a
+disguise on — quieter, and therefore likelier to survive review. So rendering
+returns the missing names and the caller decides: the composer shows them, the
+API refuses the write, neither guesses. An empty-string value counts as
+supplied, because "leave this blank" is a legitimate choice.
+
+**UTM presets are templates, resolved per variant.** `utm_source` differs by
+network — that is what the parameter is for — so `{{network}}` is filled per
+channel. One hard-coded `utm_source=social` produces a report saying traffic
+came from "social", which is a fact nobody needed. Two rules follow from not
+being able to clean up someone else's analytics afterwards:
+
+- **An existing `utm_*` is never overwritten.** Someone who typed
+  `?utm_source=newsletter` meant it. A workspace default silently replacing a
+  deliberate choice corrupts a quarter of the attribution data before anyone
+  notices. What was left alone is reported, so the override is visible rather
+  than merely tolerated.
+- **An unresolvable variable drops the parameter** rather than emitting literal
+  `{{network}}`. An absent dimension is recoverable; a polluted one has to be
+  fixed in the destination.
+
+Link detection stops before trailing punctuation, because swallowing the full
+stop at the end of a sentence produces a link that 404s — worse than not tagging
+at all — while keeping a balanced closing bracket, since Wikipedia URLs really
+do end in ")".
+
+All of it lives in `packages/content`: pure, zero-dependency, browser-importable,
+and imported by both the composer and the API. A preview computed by different
+code from the thing it previews is not a preview. Thirty-four unit tests plus
+six end-to-end.
 
 ### Crash recovery, and the fault injection that proves it
 
@@ -366,7 +415,6 @@ Named plainly so nobody goes looking.
 | **Reddit anchor** | Phase 7 analytics gate. Skeleton only. |
 | **Fault-injection harness** | ~~Ranked risk #1, never written.~~ Built — see above. |
 | **Entitlements, feature flags** | Architecture only. |
-| **Campaigns, labels, templates, UTM builder** | Phase 8. Not started. |
 | **Export jobs** | Phase 9. Per-workspace and per-subject export are specified, not built. Purge and retention ARE built — see above. |
 | **22 remaining connectors** | Documented skeletons, disabled with a stated reason. |
 | **~~Empty packages~~** | `social`, `analytics` and `notifications` were scaffolded and never filled. Deleted — the code has one consumer each and lives there. See ARCHITECTURE.md. |

@@ -17,6 +17,7 @@
     "@nestjs/swagger": "^8.1.0",
     "@smm/auth": "workspace:*",
     "@smm/config": "workspace:*",
+    "@smm/content": "workspace:*",
     "@smm/database": "workspace:*",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
