@@ -102,6 +102,7 @@ model Workspace {
   labels     Label[]
   templates  Template[]
   utmPresets UtmPreset[]
+  exportJobs ExportJob[]
 
   @@unique([organizationId, slug])
   @@index([organizationId, deletedAt])
@@ -132,6 +133,7 @@ model User {
   notifications      Notification[]
 
   createdTemplates Template[]
+  exportJobs       ExportJob[]
 
   @@index([email])
 }
@@ -1159,4 +1161,68 @@ model UtmPreset {
 
   @@unique([workspaceId, name])
   @@index([workspaceId, isDefault])
+}
+
+// ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+
+enum ExportKind {
+  /// Everything the workspace owns: posts, variants, a media manifest, metrics.
+  WORKSPACE
+  /// Everything tied to ONE end-user identity across every conversation in this
+  /// workspace. The subject-access request, in other words.
+  SUBJECT
+}
+
+enum ExportStatus {
+  PENDING
+  RUNNING
+  READY
+  FAILED
+  /// The file is gone. Kept as a row because "an export of your DMs existed and
+  /// was downloaded twice" is a fact worth being able to answer later.
+  EXPIRED
+}
+
+/// A request for a copy of some data, fulfilled asynchronously.
+///
+/// Asynchronous because it has to be. A workspace with a year of history and
+/// fifty thousand messages is not a request handler's problem, and the two
+/// alternatives are both bad: a synchronous endpoint that times out on exactly
+/// the workspaces most likely to need it, or a streaming response that cannot
+/// be retried when it breaks halfway.
+///
+/// SUBJECT exports are scoped to one workspace, always. "Everything you hold
+/// about this person" spanning tenants would answer a legitimate question by
+/// committing a cross-tenant leak — each controller answers for its own data.
+model ExportJob {
+  id             String       @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String       @db.Uuid
+  organizationId String       @db.Uuid
+  kind           ExportKind
+  /// The identity being exported, for SUBJECT. Null for WORKSPACE.
+  subjectHandle  String?
+  status         ExportStatus @default(PENDING)
+  requestedById  String?      @db.Uuid
+  /// Where the finished file lives. Null until READY.
+  storageKey     String?
+  bytes          Int?
+  /// Row counts per section, so a recipient can tell an empty export from a
+  /// broken one — the single most common question about any export.
+  summary        Json?
+  error          String?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  /// After this the file is deleted and the row moves to EXPIRED. An export of
+  /// somebody's private messages should not sit in object storage forever
+  /// because one person forgot to download it.
+  expiresAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  requestedBy User?     @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, status, createdAt])
+  @@index([status, createdAt])
 }

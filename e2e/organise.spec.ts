@@ -144,6 +144,10 @@ test.describe('organising content', () => {
     const card = page.locator('[data-card]').filter({ hasText: name })
     await expect(card).toBeVisible({ timeout: 15_000 })
     // Zero, shown rather than hidden — a new label with no posts is not broken.
-    await expect(card.getByText('0')).toBeVisible()
+    //
+    // exact, because the generated name carries a base-36 suffix that sometimes
+    // contains a digit. Without it this passed or failed depending on the
+    // clock, which is the worst kind of test: green most of the time.
+    await expect(card.getByText('0', { exact: true })).toBeVisible()
   })
 })

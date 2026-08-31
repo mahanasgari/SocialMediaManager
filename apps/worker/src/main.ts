@@ -8,6 +8,7 @@ import { dispatchWebhooks } from './webhooks.js'
 import { ingestFeeds } from './rss.js'
 import { dispatchInbound } from './inbox.js'
 import { runRetention } from './retention.js'
+import { runExports } from './exports.js'
 
 /**
  * The worker.
@@ -148,6 +149,21 @@ async function tick(): Promise<void> {
     } catch (err) {
       console.error('retention sweep failed:', err instanceof Error ? err.message : err)
     }
+  }
+
+  // Exports, one job per tick. The least urgent work here and the most
+  // expensive: a workspace export reads a year of history in one pass, so it
+  // must never sit ahead of a scheduled post in the queue.
+  try {
+    const exported = await runExports()
+    if (exported.built + exported.failed + exported.expired > 0) {
+      console.log(
+        `exports: built ${exported.built}, failed ${exported.failed}, ` +
+          `expired ${exported.expired}`
+      )
+    }
+  } catch (err) {
+    console.error('export run failed:', err instanceof Error ? err.message : err)
   }
 
   // Outbound webhooks last: they are the least time-critical work in the tick,

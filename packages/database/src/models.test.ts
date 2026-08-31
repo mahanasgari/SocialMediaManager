@@ -28,6 +28,7 @@ describe('tenant model derivation', () => {
       'AuditLog',
       'Campaign',
       'Conversation',
+      'ExportJob',
       'InboundEventDelivery',
       'Invite',
       'Label',

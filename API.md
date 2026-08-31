@@ -161,6 +161,18 @@ Base: `/api/v1`
 Endpoints for a capability the provider lacks return `422 capability_unsupported` with the provider named. The UI should never call them, because it renders from the capability matrix — but the API refuses regardless.
 
 ### Analytics and reports
+### Export
+
+| Route | Notes |
+|---|---|
+| `GET /exports` | Jobs in a workspace, newest first |
+| `POST /exports` | `{ kind: WORKSPACE \| SUBJECT, subjectHandle? }`. One in flight per workspace; a second returns 409 `export_in_progress` |
+| `GET /exports/:id/download` | Streams the gzipped JSON through the API, never a presigned storage URL. Distinct 409s for not-ready, failed and expired — one "not available" sends three different people to ask the same question |
+
+All three require `reports.export` (OWNER, ADMIN, ANALYST). A subject export is
+a bundle of one person's private messages; the roles that cannot open the inbox
+must not be able to download it in a file instead.
+
 ### Organisation
 
 | Route | Notes |

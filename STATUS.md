@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1088 unit and integration tests, plus 26 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1096 unit and integration tests, plus 31 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -145,6 +145,52 @@ They cover sign-in and its guards, all fifteen sections rendering, the sidebar
 marking the right section, compose validation against the real capability
 matrix, publishing and drafting, and the connector honesty policy — including
 that a skeleton is refused server-side, not merely disabled in the UI.
+
+### Export
+
+This product stores third-party personal data — private messages, commenter
+names, follower counts — belonging to people who never signed up for it, on
+behalf of a controller who is our customer. "Send me everything you hold about
+this person" is a request with legal weight and a clock attached, and the worst
+time to discover the capability does not exist is when someone's counsel asks.
+
+Two kinds, at `/w/:id/exports`:
+
+| | Covers |
+|---|---|
+| **Workspace** | Posts, per-channel variants, a media *manifest*, metrics, connected accounts |
+| **Subject** | Every conversation and message involving one handle, in this workspace |
+
+**Asynchronous, because it has to be.** A workspace with a year of history is
+not a request handler's problem, and both synchronous alternatives fail on
+exactly the workspaces most likely to need one: an endpoint that times out, or a
+stream that cannot be retried when it breaks halfway. The API returns a job; the
+worker builds it on its tick, last in the sequence, one at a time.
+
+Four decisions worth stating:
+
+- **A subject export never spans workspaces.** "Everything you hold about this
+  person" across tenants would answer a legitimate question by committing a
+  cross-tenant leak. Each controller answers for its own data, and the file says
+  so in its own `scope` field so the recipient knows the boundary.
+- **The handle is matched exactly, ignoring case — never as a prefix.** `@ada`
+  must not sweep up `@adamson`. Over-collecting on a subject-access request
+  discloses a third party's private messages to whoever asked, turning one
+  lawful answer into a second breach. There is a test for precisely this.
+- **Credentials are never in the file.** The test greps the whole serialised
+  output rather than checking a `select`, so it still holds when someone widens
+  the query later.
+- **The file is streamed through the API, not handed out as a presigned URL.** A
+  presigned URL is a bearer token in a query string: it outlives the session,
+  survives being pasted into a chat, and cannot be revoked. For a bundle of one
+  person's message history the extra hop is worth it.
+
+Files expire after seven days and are deleted; the **row survives as EXPIRED**,
+because "an export was produced and downloaded" is a fact worth being able to
+answer later, and deleting the record with the file destroys the only evidence
+the request was honoured. Row counts are stored per section, so an empty export
+is distinguishable from a broken one — the single most common question about any
+export, and one a byte count cannot answer.
 
 ### Organising content
 
@@ -415,7 +461,6 @@ Named plainly so nobody goes looking.
 | **Reddit anchor** | Phase 7 analytics gate. Skeleton only. |
 | **Fault-injection harness** | ~~Ranked risk #1, never written.~~ Built — see above. |
 | **Entitlements, feature flags** | Architecture only. |
-| **Export jobs** | Phase 9. Per-workspace and per-subject export are specified, not built. Purge and retention ARE built — see above. |
 | **22 remaining connectors** | Documented skeletons, disabled with a stated reason. |
 | **~~Empty packages~~** | `social`, `analytics` and `notifications` were scaffolded and never filled. Deleted — the code has one consumer each and lives there. See ARCHITECTURE.md. |
 | **Compose stack** | The images build and each process runs, but the containers have not been run together. Blocked on host disk space, not on code. |

@@ -25,6 +25,7 @@ import { ApiKeysController } from './platform/api-keys.controller.js'
 import { IntegrationsController } from './platform/integrations.controller.js'
 import { LinksController } from './links/links.controller.js'
 import { OrganisationController } from './organisation/organisation.controller.js'
+import { ExportsController } from './exports/exports.controller.js'
 import { ReportsController } from './reports/reports.controller.js'
 import { ApprovalsController } from './approvals/approvals.controller.js'
 import { NotificationsController } from './notifications/notifications.controller.js'
@@ -64,6 +65,7 @@ import { HealthController } from './health/health.controller.js'
     InboxController,
     InboundController,
     OrganisationController,
+    ExportsController,
     AdminController,
     HealthController,
   ],
