@@ -54,6 +54,14 @@ export async function disconnect(): Promise<void> {
  * connection is returned clean and pgBouncer transaction pooling stays safe.
  * Never use plain SET here — it would persist on the connection and leak into
  * the next request that borrowed it.
+ *
+ * Every wrapper below hands `fn` to AsyncLocalStorage through an ASYNC arrow,
+ * and the `async` is load-bearing. A Prisma promise is lazy: it does not run
+ * until something subscribes to it. A plain `() => fn(tx)` returns that
+ * unsubscribed promise, `run()` exits, and the query then fires with no scope
+ * in force — so a caller who writes `withTenant(id, (tx) => tx.post.findMany())`
+ * instead of an async callback gets MissingTenantScope on a call that is
+ * perfectly correct. Awaiting inside the context keeps the subscription there.
  */
 export function withTenant<T>(
   workspaceId: string,
@@ -77,7 +85,7 @@ export function withTenant<T>(
     }
 
     return scopeStorage.run(scope, () =>
-      runInTransactionContext({ active: true, workspaceId }, () => fn(tx as Db))
+      runInTransactionContext({ active: true, workspaceId }, async () => fn(tx as Db))
     )
   })
 }
@@ -107,7 +115,7 @@ export function withOrganization<T>(
   return client.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_organization', ${organizationId}, true)`
     return scopeStorage.run(scope, () =>
-      runInTransactionContext({ active: true }, () => fn(tx as Db))
+      runInTransactionContext({ active: true }, async () => fn(tx as Db))
     )
   })
 }
@@ -133,7 +141,7 @@ export function withUser<T>(
   return client.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.current_user', ${userId}, true)`
     return scopeStorage.run({ kind: 'system', reason }, () =>
-      runInTransactionContext({ active: true }, () => fn(tx as Db))
+      runInTransactionContext({ active: true }, async () => fn(tx as Db))
     )
   })
 }
@@ -154,7 +162,7 @@ export function withScheduler<T>(fn: (tx: Db) => Promise<T>, client: Db = db()):
   return client.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.scheduler', 'on', true)`
     return scopeStorage.run({ kind: 'system', reason: 'scheduler sweep across workspaces' }, () =>
-      runInTransactionContext({ active: true }, () => fn(tx as Db))
+      runInTransactionContext({ active: true }, async () => fn(tx as Db))
     )
   })
 }
@@ -182,7 +190,35 @@ export function withRetention<T>(fn: (tx: Db) => Promise<T>, client: Db = db()):
     await tx.$executeRaw`SELECT set_config('app.retention', 'on', true)`
     return scopeStorage.run(
       { kind: 'system', reason: 'retention sweep across workspaces' },
-      () => runInTransactionContext({ active: true }, () => fn(tx as Db))
+      () => runInTransactionContext({ active: true }, async () => fn(tx as Db))
+    )
+  })
+}
+
+/**
+ * The crash reconciler.
+ *
+ * "Which publishes were in flight when a worker died?" is the same shape as the
+ * scheduler and retention sweeps: a cross-cutting query that legitimately runs
+ * BEFORE any tenant is known. Under tenant-keyed RLS it matches nothing, and
+ * nothing errors — the sweep reports success having found no stale attempts,
+ * forever, while variants sit stuck in PUBLISHING.
+ *
+ * A separate actor rather than a widening of withScheduler(), because this is
+ * the only one that reads PublishAttempt — the record of what we sent to a
+ * third party and when. That grant does not belong on the actor that asks which
+ * posts are due every thirty seconds.
+ *
+ * SELECT only, and only on PublishAttempt. This finds candidate ids; every
+ * decision and every write after that runs under withTenant() through the same
+ * code the live publisher uses.
+ */
+export function withReconciler<T>(fn: (tx: Db) => Promise<T>, client: Db = db()): Promise<T> {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.reconciler', 'on', true)`
+    return scopeStorage.run(
+      { kind: 'system', reason: 'stale publish-attempt sweep across workspaces' },
+      () => runInTransactionContext({ active: true }, async () => fn(tx as Db))
     )
   })
 }
@@ -203,7 +239,7 @@ export function withTokenRedemption<T>(fn: (tx: Db) => Promise<T>, client: Db = 
     await tx.$executeRaw`SELECT set_config('app.token_redeem', 'on', true)`
     return scopeStorage.run(
       { kind: 'system', reason: 'verification token redemption, pre-authentication' },
-      () => runInTransactionContext({ active: true }, () => fn(tx as Db))
+      () => runInTransactionContext({ active: true }, async () => fn(tx as Db))
     )
   })
 }
@@ -234,7 +270,7 @@ export function withInboundRouter<T>(fn: (tx: Db) => Promise<T>, client: Db = db
     await tx.$executeRaw`SELECT set_config('app.inbound_router', 'on', true)`
     return scopeStorage.run(
       { kind: 'system', reason: 'inbound webhook routing across workspaces' },
-      () => runInTransactionContext({ active: true }, () => fn(tx as Db))
+      () => runInTransactionContext({ active: true }, async () => fn(tx as Db))
     )
   })
 }
@@ -252,7 +288,7 @@ export function withPublicPage<T>(fn: (tx: Db) => Promise<T>, client: Db = db())
   return client.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.public_page', 'on', true)`
     return scopeStorage.run({ kind: 'system', reason: 'public link-in-bio page' }, () =>
-      runInTransactionContext({ active: true }, () => fn(tx as Db))
+      runInTransactionContext({ active: true }, async () => fn(tx as Db))
     )
   })
 }
@@ -269,7 +305,7 @@ export function withApiKeyAuth<T>(fn: (tx: Db) => Promise<T>, client: Db = db())
   return client.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.apikey_auth', 'on', true)`
     return scopeStorage.run({ kind: 'system', reason: 'API key lookup precedes tenancy' }, () =>
-      runInTransactionContext({ active: true }, () => fn(tx as Db))
+      runInTransactionContext({ active: true }, async () => fn(tx as Db))
     )
   })
 }

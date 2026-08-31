@@ -1,7 +1,8 @@
 import { loadEnv } from '@smm/config'
 import { db, withTenant } from '@smm/database'
 import { Scanner, ClockWentBackwards } from './scanner.js'
-import { publishVariant } from './publisher.js'
+import { publishVariant, activePublisher } from './publisher.js'
+import { recoverInterrupted } from './recovery.js'
 import { ingestMetrics } from './metrics.js'
 import { dispatchWebhooks } from './webhooks.js'
 import { ingestFeeds } from './rss.js'
@@ -33,6 +34,29 @@ const scanner = new Scanner()
 let running = true
 
 async function tick(): Promise<void> {
+  // FIRST, before anything new is claimed.
+  //
+  // A publish that a dead process left in flight is a post that may already be
+  // public and is definitely not accounted for. Starting new work while that is
+  // unresolved is how a restart during a busy window turns into a duplicate:
+  // the human watching a variant stuck in PUBLISHING retries it by hand.
+  //
+  // It is cheap on the passes where nothing crashed, which is nearly all of
+  // them — one indexed query returning no rows.
+  try {
+    const recovered = await recoverInterrupted(activePublisher())
+    if (recovered.found > 0) {
+      console.warn(
+        `recovery: ${recovered.found} interrupted publish(es) — ` +
+          `${recovered.republishAvoided} already live (not republished), ` +
+          `${recovered.requeued} confirmed absent and requeued, ` +
+          `${recovered.needsReview} awaiting a human, ${recovered.skipped} left for the next sweep`
+      )
+    }
+  } catch (err) {
+    console.error('recovery sweep failed:', err instanceof Error ? err.message : err)
+  }
+
   let result
   try {
     result = await scanner.claim()

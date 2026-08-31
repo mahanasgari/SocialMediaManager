@@ -179,6 +179,19 @@ export class AccountMutex {
     return ok === 'OK' ? { token } : null
   }
 
+  /**
+   * True when ANYONE holds the lease.
+   *
+   * The crash reconciler needs this and the fencing check cannot answer it: a
+   * sweep has no token, because the process that had one is gone. What it
+   * needs to know is whether some OTHER worker is still mid-publish, since a
+   * slow publish and a dead one look identical from the outside and only the
+   * lease tells them apart.
+   */
+  async isHeld(provider: string, accountId: string): Promise<boolean> {
+    return (await this.redis.exists(`mx:${provider}:${accountId}`)) === 1
+  }
+
   /** True when this holder still owns the lease — check before writing a result. */
   async isHeldBy(provider: string, accountId: string, token: number): Promise<boolean> {
     const held = await this.redis.get(`mx:${provider}:${accountId}`)

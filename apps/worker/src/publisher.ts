@@ -17,6 +17,11 @@ export function publishVariant(workspaceId: string, variantId: string): Promise<
   return publisher.publishVariant(workspaceId, variantId)
 }
 
+/** The live Publisher, for the recovery sweep. */
+export function activePublisher(): Publisher {
+  return publisher
+}
+
 export function closePublisher(): Promise<void> {
   return publisher.close()
 }

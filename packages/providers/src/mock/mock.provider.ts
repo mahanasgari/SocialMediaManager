@@ -26,6 +26,7 @@ import {
   type VariantDraft,
 } from '../capabilities/index.js'
 import { verifyHmac } from '../webhook-signature.js'
+import { FileLedger } from './ledger.js'
 
 /**
  * The provider simulator.
@@ -130,13 +131,34 @@ export type MockOptions = {
   hangMs?: number
   /** Published posts, so retrievePosts can reconcile against them. */
   store?: Map<string, RemotePost[]>
+  /**
+   * A ledger that outlives this process, for fault injection.
+   *
+   * Set via SMM_MOCK_LEDGER. Without it the record of what was published dies
+   * with the worker that published it, so a crash-recovery test would ask a
+   * fresh process "did that go out?" and be told no — proving the opposite of
+   * what it set out to prove.
+   */
+  ledgerPath?: string
+  /** Simulates a provider with no read-back, where exactly-once is impossible. */
+  noReadBack?: boolean
 }
 
 export class MockProvider implements AnyProvider {
   readonly id = 'mock' as const
   readonly label = 'Mock Provider'
   readonly state = 'mock' as const
-  readonly capabilities = mockCapabilities
+  /**
+   * An instance field, not the shared constant, so one seam can be opened.
+   *
+   * Providers WITHOUT read-back are the hard case for reconciliation: with no
+   * way to ask "did that post land?", exactly-once is not achievable and the
+   * only honest move is to ask a human. Every real provider that behaves this
+   * way is a skeleton here, so without this the branch would be unreachable in
+   * tests — and an unreachable branch on the top-ranked risk is a branch that
+   * is wrong.
+   */
+  readonly capabilities: ProviderCapabilities
   readonly limits = mockLimits
   readonly media = mockMedia
   readonly text = mockText
@@ -144,11 +166,23 @@ export class MockProvider implements AnyProvider {
   private readonly scenarios: Record<string, MockScenario>
   private readonly hangMs: number
   private readonly store: Map<string, RemotePost[]>
+  private readonly ledger: FileLedger | null
 
   constructor(options: MockOptions = {}) {
     this.scenarios = options.scenarios ?? {}
     this.hangMs = options.hangMs ?? 30_000
     this.store = options.store ?? new Map()
+
+    // Environment as well as options, because the fault-injection harness
+    // launches a real worker process and cannot reach into its registry to
+    // construct one by hand.
+    this.capabilities =
+      options.noReadBack ?? process.env['SMM_MOCK_NO_READBACK'] === '1'
+        ? { ...mockCapabilities, retrievePosts: false }
+        : mockCapabilities
+
+    const path = options.ledgerPath ?? process.env['SMM_MOCK_LEDGER']
+    this.ledger = path ? new FileLedger(path) : null
   }
 
   /** Always configured: it needs no operator credentials, which is the point. */
@@ -291,7 +325,10 @@ export class MockProvider implements AnyProvider {
   }
 
   async retrievePosts(account: Account, _credential: Credential, since: Date): Promise<RemotePost[]> {
-    const posts = this.store.get(account.providerAccountId) ?? []
+    const posts = [
+      ...(this.store.get(account.providerAccountId) ?? []),
+      ...(this.ledger?.read(account.providerAccountId) ?? []),
+    ]
     return posts.filter((p) => p.createdAt >= since)
   }
 
@@ -408,6 +445,12 @@ export class MockProvider implements AnyProvider {
       mediaCount: payload.media.length,
     })
     this.store.set(account.providerAccountId, posts)
+
+    // Synchronously, before returning. In the accept-then-hang scenario this
+    // process is about to be killed on purpose, and a buffered write would be
+    // lost — which is the in-memory problem again, reached more slowly.
+    this.ledger?.append(account.providerAccountId, posts[posts.length - 1]!)
+
     return remoteId
   }
 }

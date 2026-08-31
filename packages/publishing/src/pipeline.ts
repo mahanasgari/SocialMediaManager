@@ -10,6 +10,7 @@ import {
   fingerprintFor,
   findMatch,
   idempotencyKey,
+  parseFingerprint,
   serialiseFingerprint,
   type VariantStatus,
 } from './index.js'
@@ -52,6 +53,21 @@ export type MediaPreparer = (
   providerId: string,
   surface: string
 ) => Promise<{ storageKey: string; mime: string; original: boolean; reasons: string[] }>
+
+/**
+ * The account as the publish path needs it: identity, platform metadata, and a
+ * DECRYPTED credential. Named because three signatures now share it, and an
+ * inline repeat of a shape containing a plaintext access token is a shape
+ * somebody will eventually widen without noticing what is in it.
+ */
+type PublishAccount = {
+  id: string
+  providerAccountId: string
+  handle: string
+  displayName: string
+  platformMeta: unknown
+  credential: { accessToken: string; scopes: string[] }
+}
 
 export class Publisher {
   private readonly logger = console
@@ -252,7 +268,7 @@ export class Publisher {
     variantId: string,
     key: string,
     provider: AnyProvider,
-    account: { id: string; providerAccountId: string; handle: string; displayName: string; platformMeta: unknown; credential: { accessToken: string; scopes: string[] } },
+    account: PublishAccount,
     fingerprint: ReturnType<typeof fingerprintFor>,
     startedAt: Date,
     err: unknown
@@ -288,10 +304,51 @@ export class Publisher {
       return this.fail(workspaceId, variantId, error.code, error.message)
     }
 
-    // Ambiguous: the call did not return, but the post may have landed.
+    // Ambiguous: the call did not return, but the post may have landed. The
+    // crash reconciler asks exactly this question, so it is answered by exactly
+    // this code — two implementations of "did this publish?" is two chances to
+    // be wrong in the one place where being wrong means a duplicate public post.
     if (error.code === 'ProviderDown') {
-      if (provider.capabilities.retrievePosts && provider.retrievePosts) {
-        const remote = await provider.retrievePosts(
+      return this.resolveAmbiguous(
+        { workspaceId, variantId, key, provider, account, fingerprint, startedAt },
+        'error'
+      )
+    }
+
+    return this.fail(workspaceId, variantId, error.code, error.message)
+  }
+
+  /**
+   * Decides an ambiguous publish: did it land, or did it not?
+   *
+   * Reached from two directions that look different and are the same question.
+   * Either the provider call threw without a usable answer, or the worker
+   * process died mid-call and a later sweep found the IN_FLIGHT row it left
+   * behind. In both cases we hold an attempt record and no confirmation, and
+   * the only wrong move is to assume.
+   *
+   * Retrying an ambiguous publish is how a duplicate public post happens, and a
+   * duplicate is not recoverable — you cannot un-send it, and on most networks
+   * you cannot even tell which copy people saw.
+   */
+  private async resolveAmbiguous(
+    ctx: {
+      workspaceId: string
+      variantId: string
+      key: string
+      provider: AnyProvider
+      account: PublishAccount
+      fingerprint: ReturnType<typeof fingerprintFor>
+      startedAt: Date
+    },
+    cause: 'error' | 'interrupted'
+  ): Promise<VariantStatus> {
+    const { workspaceId, variantId, key, provider, account, fingerprint, startedAt } = ctx
+
+    if (provider.capabilities.retrievePosts && provider.retrievePosts) {
+      let remote
+      try {
+        remote = await provider.retrievePosts(
           {
             id: account.id,
             providerAccountId: account.providerAccountId,
@@ -302,48 +359,162 @@ export class Publisher {
           account.credential,
           startedAt
         )
-
-        const match = findMatch(
-          fingerprint,
-          remote.map((r) => ({
-            remoteId: r.remoteId,
-            createdAt: r.createdAt,
-            text: r.text,
-            mediaCount: r.mediaCount,
-          })),
-          startedAt
+      } catch (err) {
+        // Read-back itself failed. We still do not know, and "do not know" must
+        // never decay into "assume not published" merely because the second
+        // call failed too. The attempt stays IN_FLIGHT so the next sweep asks
+        // again, rather than closing the question on no evidence.
+        this.logger.warn(
+          `variant ${variantId}: read-back failed during reconciliation, leaving ` +
+            `IN_FLIGHT for the next sweep: ` +
+            (err instanceof Error ? err.message : String(err))
         )
-
-        if (match) {
-          this.logger.info(`variant ${variantId} reconciled to ${match.remoteId} — not republished`)
-          await this.succeed(workspaceId, variantId, key, match.remoteId, undefined, 'RECONCILED')
-          return 'PUBLISHED'
-        }
-        // Confirmed absent, so retrying is safe.
-        await this.markAttempt(workspaceId, variantId, key, 'FAILED', error.code)
-        return 'QUEUED'
+        return 'PUBLISHING'
       }
 
-      // No read-back: exactly-once is not achievable here. At-most-once plus a
-      // human prompt beats at-least-once plus a duplicate.
-      await this.markAttempt(workspaceId, variantId, key, 'FAILED', error.code)
-      await withTenant(workspaceId, async (tx) => {
-        await tx.postVariant.update({
-          where: { id: variantId },
-          data: {
-            status: 'NEEDS_REVIEW',
-            lastErrorCode: error.code,
-            lastError:
-              `We could not confirm whether this published. ${provider.label} does not let us ` +
-              `check, so it needs a human decision rather than an automatic retry.`,
-          },
-        })
-        await this.refreshPostStatus(tx, variantId)
-      })
-      return 'NEEDS_REVIEW'
+      const match = findMatch(
+        fingerprint,
+        remote.map((r) => ({
+          remoteId: r.remoteId,
+          createdAt: r.createdAt,
+          text: r.text,
+          mediaCount: r.mediaCount,
+        })),
+        startedAt
+      )
+
+      if (match) {
+        this.logger.info(`variant ${variantId} reconciled to ${match.remoteId} — not republished`)
+        await this.succeed(workspaceId, variantId, key, match.remoteId, undefined, 'RECONCILED')
+        return 'PUBLISHED'
+      }
+
+      // Confirmed absent, so retrying is safe.
+      await this.markAttempt(workspaceId, variantId, key, 'FAILED', 'ProviderDown')
+      return 'QUEUED'
     }
 
-    return this.fail(workspaceId, variantId, error.code, error.message)
+    // No read-back: exactly-once is not achievable here. At-most-once plus a
+    // human prompt beats at-least-once plus a duplicate.
+    await this.markAttempt(workspaceId, variantId, key, 'FAILED', 'ProviderDown')
+    await withTenant(workspaceId, async (tx) => {
+      await tx.postVariant.update({
+        where: { id: variantId },
+        data: {
+          status: 'NEEDS_REVIEW',
+          lastErrorCode: 'ProviderDown',
+          lastError:
+            cause === 'interrupted'
+              ? `Publishing was interrupted and we could not confirm whether this went ` +
+                `out. ${provider.label} does not let us check, so it needs a human ` +
+                `decision rather than an automatic retry.`
+              : `We could not confirm whether this published. ${provider.label} does not ` +
+                `let us check, so it needs a human decision rather than an automatic retry.`,
+        },
+      })
+      await this.refreshPostStatus(tx, variantId)
+    })
+    return 'NEEDS_REVIEW'
+  }
+
+  /**
+   * Resolves one attempt left IN_FLIGHT by a process that never came back.
+   *
+   * Called by the recovery sweep, never by the publish path. The publish path
+   * always knows its own outcome; this exists precisely for the case where
+   * nobody does, because the process that knew is gone.
+   *
+   * Returns null when the attempt should be left alone — a live worker still
+   * holds the account lease, or the variant has since moved on.
+   */
+  async reconcileInterrupted(
+    workspaceId: string,
+    variantId: string,
+    attempt: { idempotencyKey: string; startedAt: Date }
+  ): Promise<VariantStatus | null> {
+    const context = await this.loadContext(workspaceId, variantId)
+    if (!context) return null
+
+    const { variant, account, provider } = context
+
+    // A slow publish is not a dead one. Without this check the sweep races a
+    // worker that is merely still waiting on a provider, and reconciling
+    // underneath it is exactly the concurrent write the mutex exists to
+    // prevent. The lease is the authority on "still alive", not the clock —
+    // which is why the lease TTL, not the staleness threshold, is what makes
+    // this safe.
+    if (await this.mutex.isHeld(provider.id, account.providerAccountId)) {
+      this.logger.info(`variant ${variantId}: account lease still held, leaving it to its owner`)
+      return null
+    }
+
+    // The variant may have been cancelled, or already resolved by an earlier
+    // sweep, between the discovery query and now.
+    if (variant.status !== 'PUBLISHING' && variant.status !== 'PREPARING_MEDIA') {
+      await withTenant(workspaceId, async (tx) => {
+        await tx.publishAttempt.updateMany({
+          where: {
+            postVariantId: variantId,
+            idempotencyKey: attempt.idempotencyKey,
+            status: 'IN_FLIGHT',
+          },
+          data: { status: 'FAILED', finishedAt: new Date(), errorCode: 'Superseded' },
+        })
+      })
+      return null
+    }
+
+    // The fingerprint was written in the same transaction as the attempt row,
+    // BEFORE the provider call — which is the only reason any of this is
+    // recoverable. Recomputing it here would use whatever the content says now,
+    // and an edit between the crash and the sweep would make it match nothing:
+    // the reconciler would report "not published", retry, and produce the
+    // duplicate the whole mechanism exists to prevent.
+    const stored = variant.fingerprint ? parseFingerprint(variant.fingerprint) : null
+    if (!stored) {
+      this.logger.warn(`variant ${variantId}: no stored fingerprint to match on, asking a human`)
+      return this.needsReview(
+        workspaceId,
+        variantId,
+        attempt.idempotencyKey,
+        'Publishing was interrupted and we have no way to check whether it went out. ' +
+          'Please confirm on the platform before retrying this.'
+      )
+    }
+
+    this.logger.info(`variant ${variantId}: recovering an interrupted publish`)
+    return this.resolveAmbiguous(
+      {
+        workspaceId,
+        variantId,
+        key: attempt.idempotencyKey,
+        provider,
+        account,
+        fingerprint: stored,
+        startedAt: attempt.startedAt,
+      },
+      'interrupted'
+    )
+  }
+
+  private async needsReview(
+    workspaceId: string,
+    variantId: string,
+    key: string,
+    message: string
+  ): Promise<VariantStatus> {
+    await withTenant(workspaceId, async (tx) => {
+      await tx.publishAttempt.updateMany({
+        where: { postVariantId: variantId, idempotencyKey: key, status: 'IN_FLIGHT' },
+        data: { status: 'FAILED', finishedAt: new Date(), errorCode: 'Interrupted' },
+      })
+      await tx.postVariant.update({
+        where: { id: variantId },
+        data: { status: 'NEEDS_REVIEW', lastErrorCode: 'Interrupted', lastError: message },
+      })
+      await this.refreshPostStatus(tx, variantId)
+    })
+    return 'NEEDS_REVIEW'
   }
 
   // -------------------------------------------------------------------------
@@ -355,6 +526,11 @@ export class Publisher {
         select: {
           id: true,
           surface: true,
+          status: true,
+          // Written in the same transaction as the attempt row, before the
+          // provider call. That ordering is what makes an interrupted publish
+          // recoverable at all.
+          fingerprint: true,
           contentOverride: true,
           socialAccountId: true,
           // Needed by the media preparer: a rendition row carries both tenancy

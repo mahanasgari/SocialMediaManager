@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1034 unit and integration tests, plus 20 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1044 unit and integration tests, plus 20 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -128,7 +128,7 @@ own processing state. Events matching no account are recorded as unrouted and
 ### End-to-end tests
 
 Twenty Playwright tests against a real browser, API, worker and database. They
-exist because 1034 unit tests caught none of the bugs that only appear when
+exist because a thousand unit tests caught none of the bugs that only appear when
 those pieces are wired together, and every one below was found by writing them:
 
 - **Sign-out did nothing visible.** The endpoint answers 204, and browsers do
@@ -145,6 +145,88 @@ They cover sign-in and its guards, all fifteen sections rendering, the sidebar
 marking the right section, compose validation against the real capability
 matrix, publishing and drafting, and the connector honesty policy — including
 that a skeleton is refused server-side, not merely disabled in the UI.
+
+### Crash recovery, and the fault injection that proves it
+
+Ranked risk #1 is a duplicate public post, because it is the only failure in
+this system that cannot be undone. You cannot un-send it, on most networks you
+cannot tell which copy people saw, and on a client account it is the kind of
+mistake that ends the relationship.
+
+The pipeline already reconciled when a provider call RETURNED an error. It did
+nothing at all when the process DIED mid-call — and those are not the same
+event. A killed worker returns nothing and decides nothing; it leaves a
+committed IN_FLIGHT attempt, a variant sitting in PUBLISHING, and a post that
+may already be public. Nothing errored, nothing retried, nothing alerted. The
+variant stayed there forever, and the first person to notice would retry it by
+hand, which is precisely how the duplicate happens.
+
+A pod being OOM-killed, a node drained, a deploy rolling: that is Tuesday, not
+an edge case.
+
+**The sweep.** `recoverInterrupted()` runs at the top of every worker tick,
+before anything new is claimed. It finds attempts left IN_FLIGHT past a
+threshold and resolves each through the same code the live publisher uses —
+`resolveAmbiguous()` is now shared, because two implementations of "did this
+publish?" is two chances to be wrong in the one place where being wrong is
+permanent.
+
+The **account lease**, not the clock, is what makes it safe. A slow publish and
+a dead one are indistinguishable by age; the sweep skips any account whose lease
+is still held, so a live worker is never reconciled underneath. And read-back
+failing during reconciliation leaves the attempt IN_FLIGHT rather than closing
+it — "do not know" must not decay into "assume not published" just because the
+second call failed too.
+
+**The harness.** Five tests that spawn a real worker process and SIGKILL it. Not
+a mock, not a thrown error, not `process.exit` — all three unwind cleanly, and
+clean is the one thing an OOM kill is not. The kill is triggered by polling the
+database for the IN_FLIGHT row, so the moment of death is defined by the same
+state the reconciler will later read.
+
+| Situation | Outcome asserted |
+|---|---|
+| Killed mid-publish | Attempt IN_FLIGHT, variant stuck in PUBLISHING, post already live |
+| Read-back, post landed | PUBLISHED with the **discovered** remote id; ledger still holds exactly one post |
+| Read-back, post absent | Requeued — confirmed absent is the only case where retry is safe |
+| No read-back | NEEDS_REVIEW; at-most-once plus a human beats at-least-once plus a duplicate |
+| Lease still held | Left alone for its owner |
+
+Two things had to change before any of it could be tested honestly:
+
+- **The mock's ledger was an in-memory `Map`.** A provider whose memory of what
+  you published vanishes when *you* crash is not a provider, it is a mirror. It
+  would have reported the post absent, the reconciler would have requeued, and
+  the harness would have proved the opposite of what it claimed. It is now
+  file-backed and written synchronously, because the process is about to be
+  killed on purpose and a buffered write would be lost.
+- **Providers with no read-back had no reachable branch.** Every real one is a
+  skeleton here, so the NEEDS_REVIEW path — the hard case, where exactly-once is
+  genuinely unachievable — could never have run in a test.
+
+### The fifth cross-cutting query
+
+`withReconciler` joins scheduler, retention, inbound routing and token
+redemption. The sweep asks "which publishes were in flight when a worker died?",
+which spans every workspace by definition, and under tenant-keyed RLS that
+matches zero rows while erroring on nothing.
+
+SELECT on `PublishAttempt` and nothing else — a separate actor rather than a
+widening of `app.scheduler`, because `PublishAttempt` is the record of what we
+sent to a third party and when, and that grant does not belong on the actor that
+runs every thirty seconds asking which posts are due. Five tests assert both
+halves against the live database: that it finds the row, and that it cannot read
+a credential, a post, an account, or close the attempt it found.
+
+### A footgun in the tenancy wrappers
+
+Found by writing those tests. `withTenant(id, (tx) => tx.post.findMany())` — a
+non-async callback returning a bare Prisma promise — threw MissingTenantScope on
+a call that is perfectly correct. A Prisma promise is lazy: it does not run until
+something subscribes, and a plain arrow returns it unsubscribed, so `run()`
+exits and the query fires with no scope in force. All ten wrappers now await
+inside the AsyncLocalStorage context. It failed loudly rather than silently,
+which is the only reason it was a footgun and not a leak.
 
 ### Brute-force defence
 
@@ -282,6 +364,7 @@ Named plainly so nobody goes looking.
 | | |
 |---|---|
 | **Reddit anchor** | Phase 7 analytics gate. Skeleton only. |
+| **Fault-injection harness** | ~~Ranked risk #1, never written.~~ Built — see above. |
 | **Entitlements, feature flags** | Architecture only. |
 | **Campaigns, labels, templates, UTM builder** | Phase 8. Not started. |
 | **Export jobs** | Phase 9. Per-workspace and per-subject export are specified, not built. Purge and retention ARE built — see above. |
