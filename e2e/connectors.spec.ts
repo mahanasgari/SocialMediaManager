@@ -15,14 +15,12 @@ test.describe('connector honesty', () => {
     const workspace = workspaceIdFrom(page)
     await page.goto(`/w/${workspace}/accounts`)
 
-    // Present, not hidden. Someone looking for TikTok should find out it needs
-    // an audit, rather than concluding the product does not support it.
-    await expect(page.getByText('TikTok')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText(/audit is required/i)).toBeVisible()
-
-    // Pinterest's sandbox tier and Medium's retired API are the other two
-    // cases where publishing would appear to succeed and reach nobody.
-    await expect(page.getByText(/sandbox pins|visible only to/i)).toBeVisible()
+    // Present, not hidden. Someone looking for a connector we have not built
+    // should find out why, rather than concluding the product does not support
+    // it at all.
+    const snapchat = page.getByTestId('provider-snapchat')
+    await expect(snapchat).toBeVisible({ timeout: 20_000 })
+    await expect(snapchat.getByText(/partner|restricted|not implemented|review/i)).toBeVisible()
   })
 
   test('a skeleton cannot be connected even by a hand-crafted request', async ({ page }) => {
@@ -34,7 +32,7 @@ test.describe('connector honesty', () => {
     // page.request, not the bare `request` fixture: that one is a separate
     // context with no session cookie, so every call is a 401 and the test
     // proves nothing about the refusal it claims to check.
-    const response = await page.request.post('/api/v1/social-accounts/connect/tiktok', {
+    const response = await page.request.post('/api/v1/social-accounts/connect/snapchat', {
       headers: { 'x-smm-client': 'web', origin: 'http://localhost:3000' },
       data: { workspaceId: workspace },
       failOnStatusCode: false,
@@ -44,6 +42,51 @@ test.describe('connector honesty', () => {
     const body = (await response.json()) as { error: { code: string; message: string } }
     expect(body.error.code).toBe('provider_not_implemented')
     expect(body.error.message).toMatch(/not implemented/i)
+  })
+
+  test('a connector that WORKS but may reach nobody says so before you connect', async ({
+    page,
+  }) => {
+    await signIn(page)
+    const workspace = workspaceIdFrom(page)
+    await page.goto(`/w/${workspace}/accounts`)
+
+    // The hardest case in the honesty policy, and why `notice` exists next to
+    // `disabledReason`. Pinterest on Trial access and TikTok without an audit
+    // both PUBLISH SUCCESSFULLY and reach nobody: an id comes back, nothing
+    // errors, and a month of scheduled content is quietly wasted. Neither is
+    // disabled, because both genuinely work — so the caveat has to be said
+    // before anyone schedules against them.
+    const pinterest = page.getByTestId('provider-pinterest')
+    await expect(pinterest.getByText(/visible only to you/i)).toBeVisible({ timeout: 20_000 })
+
+    const tiktok = page.getByTestId('provider-tiktok')
+    await expect(tiktok.getByText(/audit/i)).toBeVisible()
+  })
+
+  test('a connector with no such caveat carries no notice', async ({ page }) => {
+    // The field has to stay meaningful. If every provider carried a warning,
+    // nobody would read any of them.
+    await signIn(page)
+    const workspace = workspaceIdFrom(page)
+    await page.goto(`/w/${workspace}/accounts`)
+
+    const telegram = page.getByTestId('provider-telegram')
+    await expect(telegram).toBeVisible({ timeout: 20_000 })
+    await expect(telegram.getByText(/audit|visible only to you|sandbox/i)).toHaveCount(0)
+  })
+
+  test('a provider needing operator credentials says THAT, not "not built"', async ({ page }) => {
+    await signIn(page)
+    const workspace = workspaceIdFrom(page)
+    await page.goto(`/w/${workspace}/accounts`)
+
+    // Two different disabled states that must never be conflated: one the
+    // operator can fix by pasting a client id, one they cannot fix at all.
+    // Facebook is implemented and simply has no credentials on this install.
+    const facebook = page.getByTestId('provider-facebook')
+    await expect(facebook.getByText(/not configured/i)).toBeVisible({ timeout: 20_000 })
+    await expect(facebook.getByText(/not implemented|not built/i)).toHaveCount(0)
   })
 
   test('implemented connectors that use credentials show a form, not a dead button', async ({
@@ -98,6 +141,7 @@ test.describe('connector honesty', () => {
       id: string
       state: string
       disabledReason: string | null
+      notice: string | null
     }>
 
     // Every provider is in exactly one declared state, and every disabled one
@@ -108,6 +152,13 @@ test.describe('connector honesty', () => {
       if (provider.state === 'skeleton') {
         expect(provider.disabledReason, `${provider.id} is disabled with no reason`).toBeTruthy()
       }
+    }
+
+    // The five the roadmap prioritised are built, not documented intentions.
+    for (const id of ['facebook', 'instagram', 'pinterest', 'youtube', 'tiktok']) {
+      expect(providers.find((p) => p.id === id)?.state, `${id} should be implemented`).toBe(
+        'implemented'
+      )
     }
   })
 })

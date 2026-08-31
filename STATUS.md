@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1117 unit and integration tests, plus 31 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1234 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -145,6 +145,68 @@ They cover sign-in and its guards, all fifteen sections rendering, the sidebar
 marking the right section, compose validation against the real capability
 matrix, publishing and drafting, and the connector honesty policy — including
 that a skeleton is refused server-side, not merely disabled in the UI.
+
+### Connectors
+
+Eight implemented: **Facebook Pages, Instagram, Pinterest, YouTube, TikTok**,
+Mastodon, Bluesky, Telegram. Sixteen remain documented skeletons, each disabled
+with a stated reason.
+
+Facebook and Instagram share one Meta Graph module rather than each carrying a
+copy of the OAuth flow — Instagram Business accounts are reached *through* a
+Facebook Page, so it is one API, and two copies of it would drift.
+
+What the real APIs forced, none of which a mock would have taught:
+
+| | |
+|---|---|
+| **Instagram publish is two calls, and the first is async** | A container is created, Instagram fetches and transcodes, and only a FINISHED container can be published. The adapter polls, bounded at five minutes. `PUBLISHED` is the important state: it means an earlier attempt succeeded and we never saw the response, so returning beats publishing a second time |
+| **Instagram fetches media from us** | There is no upload. `MEDIA_PUBLIC_MODE` and the signed relay are load-bearing here, not optional |
+| **Carousel children need `is_carousel_item`** | Without it a two-image carousel publishes as two separate posts — undoable only by deleting both |
+| **Seeing a Page is not posting to it** | `tasks` is checked at connect and a Page without CREATE_CONTENT is refused there, not on the first scheduled post days later |
+| **Page tokens inherit their lifetime** | The user token is exchanged for a long-lived one first. Skipping that works in testing and breaks for every user overnight |
+| **YouTube moves the bytes itself** | Resumable upload: metadata opens a session, bytes go to the returned URL. `privacyStatus` is always sent and defaults to *private*, because a missing value is not an error — it uploads something nobody can see |
+| **Google returns no refresh token on refresh** | Returning `undefined` would let a caller clear the stored one, and the channel stops publishing a day later |
+| **TikTok create_time is in seconds** | Read as milliseconds it puts every post in 1970 and the reconciler matches nothing — which, after an ambiguous publish, means a duplicate |
+| **TikTok returns errors inside HTTP 200** | Checking only the status code would report a video that does not exist |
+
+**A corrected fact.** The plan recorded `videos.insert` as 1600 units of a
+10,000/day quota — about six uploads a day — and `PROVIDERS.md` had flagged it
+`[A]` pending a check. Checked against Google's documentation on 2026-08-31:
+uploads now have their own bucket, 1 unit each, 100 per day. Six a day is a
+constraint you design a product around; a hundred is not, and encoding the stale
+number would have deferred publishing that did not need deferring.
+
+#### `notice`: the honesty case that had no home
+
+Two of these connectors work perfectly and can still reach nobody:
+
+- **Pinterest on Trial access** creates sandbox pins visible only to their
+  creator.
+- **TikTok without a passed audit** posts at private visibility.
+
+In both, the API returns success, an id comes back, and nothing anywhere
+reports a problem. That is the worst failure mode in this system — a publish
+indistinguishable from a real one that reaches no one — and `disabledReason`
+could not express it, because neither connector is disabled.
+
+So the descriptor gained `notice`: a caveat about something that *works*,
+rendered in warning colour on the connect screen. It stays meaningful because
+only these two carry one, and a test asserts that a connector without a caveat
+has none.
+
+TikTok goes further, because it can. `creator_info` returns
+`privacy_level_options` — what the app is actually permitted to use — and an
+unaudited app is offered only `SELF_ONLY`. So the adapter queries before every
+publish and **refuses** when the requested visibility is not on offer, naming
+the audit. A refusal someone can act on beats a success they cannot see. TikTok
+requires that call before posting anyway, so the check is free.
+
+**The contract suite earned its place again**, catching three capabilities
+declared true that the APIs do not offer: Pinterest comment reads, TikTok
+comment reads and replies, and TikTok post deletion. Each was harmless while the
+provider was a skeleton and would have become a dead control the moment it went
+live.
 
 ### The compose stack, actually run
 
@@ -554,10 +616,9 @@ Named plainly so nobody goes looking.
 
 | | |
 |---|---|
-| **Reddit anchor** | Phase 7 analytics gate. Skeleton only. |
 | **Fault-injection harness** | ~~Ranked risk #1, never written.~~ Built — see above. |
 | **Entitlements, feature flags** | Architecture only. |
-| **22 remaining connectors** | Documented skeletons, disabled with a stated reason. |
+| **16 remaining connectors** | Documented skeletons, disabled with a stated reason. |
 | **~~Empty packages~~** | `social`, `analytics` and `notifications` were scaffolded and never filled. Deleted — the code has one consumer each and lives there. See ARCHITECTURE.md. |
 
 ### Deliberately excluded, permanently

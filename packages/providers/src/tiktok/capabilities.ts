@@ -36,10 +36,25 @@ export const capabilities = {
   firstComment: false,
   draftSupport: false,
   editPost: false,
-  deletePost: true,
+  /**
+   * TikTok exposes no delete in the Content Posting API.
+   *
+   * Declared true while this was a skeleton, which cost nothing then. Left
+   * true now it would put a Delete button in the UI that can only ever fail —
+   * and on a published video that is a control people will reach for.
+   */
+  deletePost: false,
   retrievePosts: true,
-  comments: true,
-  replies: true,
+  /**
+   * Comment read and reply need scopes TikTok grants separately from the
+   * Content Posting API, and only to approved use cases.
+   *
+   * Declared true while this was a skeleton. Left true now, the inbox would
+   * offer a TikTok comment view that never fills and a reply box that always
+   * fails — worse than not offering it, because it looks supported.
+   */
+  comments: false,
+  replies: false,
   mentions: false,
   dm: false,
   conversations: false,

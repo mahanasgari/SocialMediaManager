@@ -69,6 +69,21 @@ export type ProviderDescriptor = {
   capabilities: Record<string, boolean>
   surfaces: string[]
   disabledReason: string | null
+  /**
+   * A caveat about a connector that WORKS.
+   *
+   * Distinct from disabledReason, which explains why something cannot be used.
+   * This is for the harder case: the connector functions, the API returns
+   * success, and something outside our control still makes the result not what
+   * a reasonable person would expect.
+   *
+   * Pinterest on Trial access creates pins visible only to their creator, and
+   * TikTok without an audited app posts at private visibility. In both, the
+   * call succeeds, an id comes back, and nothing anywhere reports a problem —
+   * the post simply reaches nobody. There is no runtime signal to check, so
+   * saying it plainly at connect time is the only honest option available.
+   */
+  notice: string | null
   /** 'oauth' | 'credentials' — decides which connect control the UI renders. */
   authStyle: string
   /** Values to collect before connecting. Empty when none are needed. */
@@ -101,6 +116,7 @@ export function describe(provider: AnyProvider): ProviderDescriptor {
     capabilities: { ...provider.capabilities },
     surfaces: Object.keys(provider.media),
     disabledReason,
+    notice: (provider as { notice?: string }).notice ?? null,
     authStyle: provider.authStyle ?? 'oauth',
     connectFields: provider.connectFields ?? [],
   }

@@ -213,7 +213,7 @@ Trial access creates **sandbox pins visible only to their creator**, capped arou
 Source: https://developers.pinterest.com/docs/key-concepts/access-tiers/ retrieved 2026-08-29 **[V]**
 
 ### YouTube
-`videos.insert` is expensive against the default daily quota, and increases require a compliance audit. Resumable upload protocol. Commonly cited as 1600 units against 10,000/day, with recent documentation also describing a separate per-day upload bucket — **marked `[A]` because I have not confirmed this against Google's own quota documentation.** Verify at https://developers.google.com/youtube/v3/determine_quota_cost before the budget declaration in `limits.ts` is trusted.
+`videos.insert` is expensive against the default daily quota, and increases require a compliance audit. Resumable upload protocol. **Verified 2026-08-31**: uploads are metered in their own Video Uploads bucket at 1 unit per call, 100 calls per day — https://developers.google.com/youtube/v3/docs/videos/insert. This supersedes the widely-cited 1600-of-10,000 figure, which this document previously carried as `[A]` pending exactly this check. The difference is material: six uploads a day is a constraint you design around, a hundred is not.
 
 ### WhatsApp Business, Snapchat, WeChat, VK
 Restricted, partner-gated, or regionally constrained access `[A]`. These ship as `skeleton` with documented endpoints and explicit TODOs. Do not represent them as working.
@@ -244,7 +244,7 @@ Every mapped error carries a **human-readable message**: *"LinkedIn rejected thi
 
 ```ts
 export const limits = {
-  publish:   { cost: 1600, window: '24h', budget: 10_000, unit: 'quota' },
+  publish:   { cost: 1, window: '24h', budget: 100, unit: 'requests' },
   analytics: { cost: 1,    window: '24h', budget: 10_000, unit: 'quota' },
   scope: 'app',                    // 'app' | 'account' | 'both'
   concurrency: { perAccount: 1, perProvider: 4 },

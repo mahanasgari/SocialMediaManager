@@ -37,7 +37,14 @@ export const capabilities = {
   editPost: false,
   deletePost: true,
   retrievePosts: true,
-  comments: true,
+  /**
+   * Pinterest v5 exposes no endpoint for reading the comments on a Pin.
+   *
+   * Declared true while this was a skeleton, which cost nothing then and would
+   * now put a comment view in the inbox that can never fill. False until
+   * Pinterest ships a read path — the contract test is what caught it.
+   */
+  comments: false,
   replies: false,
   mentions: false,
   dm: false,

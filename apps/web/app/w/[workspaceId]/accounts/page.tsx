@@ -113,6 +113,14 @@ export default async function AccountsPage({
                   <p className="mt-0.5 text-xs">
                     <Muted>{p.disabledReason ?? capabilitySummary(p.capabilities)}</Muted>
                   </p>
+
+                  {/* A caveat on a connector that works. Rendered in warning
+                      colour and BEFORE anyone connects, because the failure it
+                      describes is invisible afterwards: the API returns success
+                      and the post reaches nobody. */}
+                  {p.notice && (
+                    <p className="mt-1.5 max-w-prose text-xs text-warning">{p.notice}</p>
+                  )}
                 </div>
                 {/* Which control appears comes from the provider's own
                     declaration, not from a list here — so a new connector of

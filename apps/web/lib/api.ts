@@ -37,6 +37,8 @@ export type ProviderDescriptor = {
   capabilities: Record<string, boolean>
   surfaces: string[]
   disabledReason: string | null
+  /** A caveat about a connector that WORKS. See registry.describe(). */
+  notice: string | null
   /** Decides which connect control the accounts page renders. */
   authStyle: 'oauth' | 'credentials'
   connectFields: ReadonlyArray<{

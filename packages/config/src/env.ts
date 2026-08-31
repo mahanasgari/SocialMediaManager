@@ -113,6 +113,14 @@ export const envSchema = z
     /** Facebook Pages and Instagram share one Meta app. */
     META_APP_ID: z.string().min(1).optional(),
     META_APP_SECRET: z.string().min(1).optional(),
+    PINTEREST_APP_ID: z.string().min(1).optional(),
+    PINTEREST_APP_SECRET: z.string().min(1).optional(),
+    /** YouTube. A Google Cloud project, not a YouTube-specific credential. */
+    GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+    GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+    /** TikTok calls it a client KEY, not an id. */
+    TIKTOK_CLIENT_KEY: z.string().min(1).optional(),
+    TIKTOK_CLIENT_SECRET: z.string().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     const url = new URL(env.PUBLIC_URL)
