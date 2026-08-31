@@ -4,6 +4,7 @@ import type { FastifyReply, FastifyRequest } from 'fastify'
 import { cookiePolicy, loadEnv } from '@smm/config'
 import { z } from 'zod'
 import { errors } from '../common/errors.js'
+import { signInAttemptsBlocked } from '@smm/observability'
 import { Public } from './auth-mode.guard.js'
 import { CurrentUser } from './current-user.js'
 import { AuthService } from './auth.service.js'
@@ -76,10 +77,20 @@ export class AuthController {
     // application down as a side effect. Rejecting here, before any hashing
     // happens, is what prevents the guessing AND the denial of service.
     const account = await this.attempts.consume('login', input.email, DEFAULT_ACCOUNT_POLICY)
-    if (!account.allowed) throw errors.tooManyAttempts(account.retryAfterSeconds)
+    if (!account.allowed) {
+      // Labelled by which limiter fired. A rise in the account label is one
+      // credential being guessed; a rise in the ip label is a spray across
+      // many. Different attacks, different responses, one counter would
+      // show a single indistinguishable line.
+      signInAttemptsBlocked.inc({ kind: 'account' })
+      throw errors.tooManyAttempts(account.retryAfterSeconds)
+    }
 
     const source = await this.attempts.consume('login-ip', ip, DEFAULT_IP_POLICY)
-    if (!source.allowed) throw errors.tooManyAttempts(source.retryAfterSeconds)
+    if (!source.allowed) {
+      signInAttemptsBlocked.inc({ kind: 'ip' })
+      throw errors.tooManyAttempts(source.retryAfterSeconds)
+    }
 
     const result = await this.auth.verifyCredentials(input)
 

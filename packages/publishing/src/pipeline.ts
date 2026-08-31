@@ -4,6 +4,7 @@ import { decrypt, keyProvider, withTenant } from '@smm/database'
 import { ProviderError, registry, windowMs, type AnyProvider } from '@smm/providers'
 import { publicUrlFor } from '@smm/storage'
 import { AccountMutex, RateLimiter, type BudgetSpec } from '@smm/ratelimit'
+import { budgetDenials, providerRateLimits, publishDuration, publishOutcomes } from '@smm/observability'
 import {
   derivePostStatus,
   shouldDerive,
@@ -83,10 +84,36 @@ export class Publisher {
     this.prepareMedia = options.prepareMedia
   }
 
-  /** Publishes one variant. Returns its resulting status. */
+  /**
+   * Publishes one variant. Returns its resulting status.
+   *
+   * The wrapper below is where the outcome is counted, rather than at each of
+   * the dozen `return`s inside. Counting at every exit means the next branch
+   * somebody adds is the one that goes unmeasured, and a metric with a hole in
+   * it is worse than none — it reads as complete.
+   */
   async publishVariant(workspaceId: string, variantId: string): Promise<VariantStatus> {
     const context = await this.loadContext(workspaceId, variantId)
-    if (!context) return 'FAILED'
+    if (!context) {
+      publishOutcomes.inc({ provider: 'unknown', outcome: 'unresolvable' })
+      return 'FAILED'
+    }
+
+    const end = publishDuration.startTimer({ provider: context.provider.id })
+    try {
+      const status = await this.attempt(workspaceId, variantId, context)
+      publishOutcomes.inc({ provider: context.provider.id, outcome: status.toLowerCase() })
+      return status
+    } finally {
+      end()
+    }
+  }
+
+  private async attempt(
+    workspaceId: string,
+    variantId: string,
+    context: NonNullable<Awaited<ReturnType<Publisher['loadContext']>>>
+  ): Promise<VariantStatus> {
 
     const { variant, account, provider, content, media } = context
 
@@ -185,6 +212,12 @@ export class Publisher {
         const acquired = await this.limiter.acquire(budget)
         if (!acquired.granted) {
           // Deferred, NOT failed, and deliberately before any attempt row exists.
+          //
+          // Counted separately from a provider 429 because the two mean
+          // opposite things: this is the budget working, that is our documented
+          // limit being wrong. One counter for both would make the distinction
+          // the whole rate-limit design rests on unmeasurable.
+          budgetDenials.inc({ provider: provider.id, operation: 'publish' })
           this.logger.info(`variant ${variantId} deferred ${acquired.waitMs}ms: budget exhausted`)
           return 'QUEUED'
         }
@@ -279,6 +312,7 @@ export class Publisher {
         : new ProviderError(provider.id, 'ProviderDown', 'The provider did not respond.')
 
     if (error.code === 'RateLimited') {
+      providerRateLimits.inc({ provider: provider.id })
       const budget = this.budgetFor(provider, account.id, 'publish')
       if (budget) {
         // The provider's own 429 is the authoritative signal that our documented

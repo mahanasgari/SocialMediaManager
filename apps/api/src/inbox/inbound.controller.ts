@@ -4,6 +4,7 @@ import type { FastifyRequest } from 'fastify'
 import { createHash } from 'node:crypto'
 import { withInboundRouter } from '@smm/database'
 import { errors } from '../common/errors.js'
+import { inboundEvents } from '@smm/observability'
 import { Public } from '../auth/auth-mode.guard.js'
 
 /**
@@ -99,7 +100,10 @@ export class InboundController {
         where: { provider, contentHash },
         select: { id: true },
       })
-      if (existing) return
+      if (existing) {
+        inboundEvents.inc({ provider, disposition: 'duplicate' })
+        return
+      }
 
       const event = await tx.inboundEvent.create({
          
@@ -118,6 +122,7 @@ export class InboundController {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           data: { provider, payload: safeParse(body) } as any,
         })
+        inboundEvents.inc({ provider, disposition: 'unidentifiable' })
         return
       }
 
@@ -136,8 +141,14 @@ export class InboundController {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           data: { provider, providerAccountId, payload: safeParse(body) } as any,
         })
+        // The metric worth an alert. A sustained rise means a subscription
+        // points at us for an account nobody connected, and every one of those
+        // events is being dropped — correctly, and invisibly.
+        inboundEvents.inc({ provider, disposition: 'unrouted' })
         return
       }
+
+      inboundEvents.inc({ provider, disposition: 'routed' }, accounts.length)
 
       for (const account of accounts) {
         await tx.inboundEventDelivery.create({

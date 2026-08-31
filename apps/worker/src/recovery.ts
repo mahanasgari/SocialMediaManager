@@ -1,5 +1,6 @@
 import { withReconciler } from '@smm/database'
 import type { Publisher } from '@smm/publishing'
+import { interruptedPublishes, recoveryOutcomes } from '@smm/observability'
 
 /**
  * Recovering publishes that a dead process left in flight.
@@ -72,6 +73,11 @@ export async function recoverInterrupted(
     })
   })
 
+  // A gauge, not a counter: this is a level that should return to zero, and
+  // the alert worth writing is "still above zero after two sweeps" rather than
+  // "ever above zero", which is normal.
+  interruptedPublishes.set(stale.length)
+
   const result: RecoveryResult = {
     found: stale.length,
     republishAvoided: 0,
@@ -88,15 +94,27 @@ export async function recoverInterrupted(
         { idempotencyKey: attempt.idempotencyKey, startedAt: attempt.startedAt }
       )
 
-      if (status === null || status === 'PUBLISHING') result.skipped += 1
-      else if (status === 'PUBLISHED') result.republishAvoided += 1
-      else if (status === 'QUEUED') result.requeued += 1
-      else if (status === 'NEEDS_REVIEW') result.needsReview += 1
+      if (status === null || status === 'PUBLISHING') {
+        result.skipped += 1
+        recoveryOutcomes.inc({ outcome: 'deferred' })
+      } else if (status === 'PUBLISHED') {
+        result.republishAvoided += 1
+        // The one worth alerting on. Every increment here is a post that was
+        // already live and would have been sent twice by a blind retry.
+        recoveryOutcomes.inc({ outcome: 'reconciled' })
+      } else if (status === 'QUEUED') {
+        result.requeued += 1
+        recoveryOutcomes.inc({ outcome: 'requeued' })
+      } else if (status === 'NEEDS_REVIEW') {
+        result.needsReview += 1
+        recoveryOutcomes.inc({ outcome: 'needs_review' })
+      }
     } catch (err) {
       // One unrecoverable attempt must not stop the sweep. It stays IN_FLIGHT
       // and the next pass tries again, which is the correct outcome: an
       // unanswered question is better left unanswered than answered wrongly.
       result.skipped += 1
+      recoveryOutcomes.inc({ outcome: 'error' })
       console.error(
         `recovery: variant ${attempt.postVariantId} could not be reconciled:`,
         err instanceof Error ? err.message : err

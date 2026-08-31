@@ -90,6 +90,18 @@ export const envSchema = z
     CATCHUP_WINDOW_MINUTES: z.coerce.number().int().positive().default(60),
     WORKSPACE_PURGE_GRACE_DAYS: z.coerce.number().int().positive().default(30),
     INBOX_RETENTION_DAYS: z.coerce.number().int().positive().optional(),
+
+    // --- observability ---
+    /**
+     * Bearer token required by GET /api/v1/metrics.
+     *
+     * Optional, because an unauthenticated scrape on a private network is a
+     * legitimate setup and refusing it outright would be hostile. Left unset on
+     * an internet-facing deployment the API warns on every boot — the same
+     * shape as ALLOW_INSECURE_COOKIES, and for the same reason: a property that
+     * disappears without saying so is worse than either explicit choice.
+     */
+    METRICS_TOKEN: z.string().min(16).optional(),
   })
   .superRefine((env, ctx) => {
     const url = new URL(env.PUBLIC_URL)

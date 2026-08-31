@@ -71,6 +71,7 @@ packages/
   publishing/     State machine, status reducer, orchestration, idempotency, reconciliation
   ui/             shadcn-based shared components
   content/        Template variables and UTM tagging — pure, browser-importable
+  observability/  Structured logging and the Prometheus registry
   config/         zod env schema, shared tsconfig and eslint, feature flags
 ```
 

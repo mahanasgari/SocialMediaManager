@@ -34,6 +34,7 @@ import { InboxController } from './inbox/inbox.controller.js'
 import { InboundController } from './inbox/inbound.controller.js'
 import { AdminController } from './admin/admin.controller.js'
 import { HealthController } from './health/health.controller.js'
+import { MetricsController } from './health/metrics.controller.js'
 
 /**
  * Both guards are global, and routes opt OUT with @Public().
@@ -68,6 +69,7 @@ import { HealthController } from './health/health.controller.js'
     ExportsController,
     AdminController,
     HealthController,
+    MetricsController,
   ],
   providers: [
     { provide: APP_FILTER, useClass: HttpExceptionFilter },

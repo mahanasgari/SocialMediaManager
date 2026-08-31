@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1096 unit and integration tests, plus 31 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1117 unit and integration tests, plus 31 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -145,6 +145,57 @@ They cover sign-in and its guards, all fifteen sections rendering, the sidebar
 marking the right section, compose validation against the real capability
 matrix, publishing and drafting, and the connector honesty policy — including
 that a skeleton is refused server-side, not merely disabled in the UI.
+
+### Observability
+
+The admin console answers "is this workspace healthy?" for a person looking at a
+screen. This answers "wake me at 3am" for a machine that is not looking at
+anything, and the two are not substitutes — a dashboard nobody is watching
+during an incident is a dashboard that did not exist.
+
+**Metrics** at `GET /api/v1/metrics` (API) and `:9464/metrics` (worker),
+in Prometheus text format. Two endpoints rather than one, deliberately: they
+measure different processes, and when the worker dies its numbers should
+*vanish* from the scrape rather than be reported as zero by somebody else. A
+gauge reading zero and a gauge that stopped answering mean completely different
+things, and only one of them is an outage.
+
+What is measured comes from what has actually gone wrong here, not from what is
+easy to count:
+
+| | Why |
+|---|---|
+| `variants_overdue`, `oldest_overdue_seconds` | The single most important number. A healthy install sits at zero except between a tick and its publish, so any sustained value is a scheduler that has stopped — which otherwise looks exactly like a quiet week |
+| `publishes_interrupted`, `recovery_outcomes_total` | Every `reconciled` increment is a post that was already live and would have been sent twice by a blind retry |
+| `budget_denials_total` vs `provider_rate_limits_total` | Kept apart on purpose. One is our budget working, the other is our documented limit being wrong; one counter for both makes the distinction the rate-limit design rests on unmeasurable |
+| `publish_lateness_seconds` | Observed for every publish, not only late ones — a histogram fed its outliers cannot say what normal looks like |
+| `inbound_events_total{disposition}` | A rise in `unrouted` means a subscription points at us for an account nobody connected, and every one is being dropped correctly and invisibly |
+| `nodejs_eventloop_lag_seconds` | The characteristic worker failure is a transcode pinning the loop while every other job silently stops — invisible in every application counter, because publishes simply stop arriving |
+
+HTTP timing is labelled by **route** (`/api/v1/exports/:id/download`), never by
+URL. An unbounded label value gives every request its own time series and takes
+the monitoring system down — an observability change causing the outage it was
+added to catch.
+
+**Access.** `METRICS_TOKEN` is optional. What leaks without it is operational,
+not personal — no message bodies, no handles — but it is commercially telling,
+so an `https://` deployment with no token warns on every boot. Same shape as
+`ALLOW_INSECURE_COOKIES`, and for the same reason: a private network with an
+unauthenticated scrape is legitimate and refusing it would be hostile, but a
+property that disappears without saying so is worse than either explicit choice.
+
+**Structured logs.** JSON lines under `NODE_ENV=production`, human-readable
+otherwise — chosen by environment rather than by the caller, because a logger
+whose shape depends on who is calling it drifts within a week. Field names are
+redacted by key, case-insensitively, at any depth: a field wrongly hidden costs
+one debugging session, a field wrongly shown costs a credential rotation. Errors
+are serialised explicitly, because `message` and `stack` are non-enumerable and
+a caught error otherwise logs as `{}`.
+
+It earned its place on first run. The new deployment-wide gauge query was
+written without a tenant scope — the **sixth** instance of a cross-cutting query
+that precedes tenancy — and the guard threw immediately instead of the gauge
+reporting zero overdue posts forever while the scheduler was on fire.
 
 ### Export
 

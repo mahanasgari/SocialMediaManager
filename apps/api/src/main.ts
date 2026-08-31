@@ -1,5 +1,6 @@
 import 'reflect-metadata'
 import { Logger } from '@nestjs/common'
+import { httpDuration } from '@smm/observability'
 import { NestFactory } from '@nestjs/core'
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify'
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger'
@@ -98,6 +99,41 @@ async function bootstrap(): Promise<void> {
 
   const cookies = cookiePolicy(env)
   if (cookies.warning) logger.warn(cookies.warning)
+
+  // Metrics exposure, stated at boot rather than discovered in a scan.
+  //
+  // The same shape as the cookie warning above: an unauthenticated scrape on a
+  // private network is legitimate and refusing it would be hostile, but a
+  // property that disappears without saying so is worse than either explicit
+  // choice. On http://localhost this is silent — there is nothing to warn about.
+  if (!env.METRICS_TOKEN && env.PUBLIC_URL.startsWith('https://')) {
+    logger.warn(
+      'GET /api/v1/metrics is served WITHOUT a token on an internet-facing deployment. ' +
+        'It exposes operational volume and error rates, not personal data. ' +
+        'Set METRICS_TOKEN to require a bearer token, or restrict the path at your proxy.'
+    )
+  }
+
+  // Request timing, registered as a Fastify hook rather than a Nest interceptor
+  // so it also covers responses Nest never sees — 404s and payload-too-large
+  // among them, which are exactly the ones worth a graph.
+  //
+  // Labelled by ROUTE, never by url. An unbounded label value gives every
+  // request its own time series and takes the monitoring system down, which is
+  // an observability change causing the outage it was added to catch.
+  const instance = app.getHttpAdapter().getInstance()
+  instance.addHook('onResponse', (request, reply, done) => {
+    const route = (request as { routeOptions?: { url?: string } }).routeOptions?.url ?? 'unmatched'
+    httpDuration.observe(
+      {
+        method: request.method,
+        route,
+        status: `${Math.floor(reply.statusCode / 100)}xx`,
+      },
+      reply.elapsedTime / 1000
+    )
+    done()
+  })
 
   // Graceful shutdown.
   //

@@ -1,5 +1,5 @@
 {
-  "name": "@smm/publishing",
+  "name": "@smm/observability",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -19,12 +19,7 @@
   },
   "dependencies": {
     "@smm/config": "workspace:*",
-    "@smm/observability": "workspace:*",
-    "@smm/database": "workspace:*",
-    "@smm/providers": "workspace:*",
-    "@smm/ratelimit": "workspace:*",
-    "ioredis": "^5.4.1",
-    "@smm/storage": "workspace:*"
+    "prom-client": "^15.1.3"
   },
   "files": [
     "dist"

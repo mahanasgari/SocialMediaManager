@@ -1,5 +1,13 @@
 import { loadEnv } from '@smm/config'
-import { db, withTenant } from '@smm/database'
+import {
+  log,
+  oldestOverdueSeconds,
+  overdueVariants,
+  publishLateness,
+  tickDuration,
+  variantsAwaitingReview,
+} from '@smm/observability'
+import { db, withScheduler, withTenant } from '@smm/database'
 import { Scanner, ClockWentBackwards } from './scanner.js'
 import { publishVariant, activePublisher } from './publisher.js'
 import { recoverInterrupted } from './recovery.js'
@@ -9,6 +17,7 @@ import { ingestFeeds } from './rss.js'
 import { dispatchInbound } from './inbox.js'
 import { runRetention } from './retention.js'
 import { runExports } from './exports.js'
+import { startMetricsServer } from './metrics-server.js'
 
 /**
  * The worker.
@@ -34,6 +43,73 @@ let lastRetentionAt = 0
 const scanner = new Scanner()
 let running = true
 
+/**
+ * Every line this process writes carries `service: "worker"`.
+ *
+ * Worth the two characters because the API and the worker land in one stream
+ * once anything aggregates them, and "which process logged this?" is the first
+ * question asked of every line and the one plain text cannot answer.
+ */
+const workerLog = log.child({ service: 'worker' })
+
+/**
+ * Times one phase of the tick and never lets it take the tick down.
+ *
+ * The wrapper exists because the alternative — a try/catch and a stopwatch
+ * repeated eight times — is eight chances to forget one, and the phase somebody
+ * forgets is the phase that hangs.
+ */
+async function phase(name: string, run: () => Promise<void>): Promise<void> {
+  const end = tickDuration.startTimer({ phase: name })
+  try {
+    await run()
+  } catch (err) {
+    workerLog.error(`${name} failed`, { err })
+  } finally {
+    end()
+  }
+}
+
+/**
+ * The gauges an operator alerts on.
+ *
+ * Read once per tick rather than derived from what the tick happened to do,
+ * because the number that matters is a LEVEL — how many posts are overdue right
+ * now — and a level cannot be reconstructed from a stream of events. A worker
+ * that has stopped publishing entirely emits no events at all, which is exactly
+ * when this needs to be right.
+ */
+async function readGauges(now: Date): Promise<void> {
+  // Under the scheduler actor, because this is the SAME cross-cutting shape as
+  // every sweep in this process: "how many posts are overdue across the whole
+  // deployment" has no one workspace to scope by.
+  //
+  // Written first without it, and the tenancy guard threw immediately — which
+  // is the design working. The alternative reading of that mistake is a gauge
+  // that reports zero overdue posts forever while the scheduler is on fire.
+  const [overdue, review, oldest] = await withScheduler(async (tx) =>
+    Promise.all([
+      tx.postVariant.count({
+        where: { status: { in: ['SCHEDULED', 'QUEUED'] }, post: { scheduledAt: { lt: now } } },
+      }),
+      tx.postVariant.count({ where: { status: 'NEEDS_REVIEW' } }),
+      tx.postVariant.findFirst({
+        where: { status: { in: ['SCHEDULED', 'QUEUED'] }, post: { scheduledAt: { lt: now } } },
+        orderBy: { post: { scheduledAt: 'asc' } },
+        select: { post: { select: { scheduledAt: true } } },
+      }),
+    ])
+  )
+
+  overdueVariants.set(overdue)
+  variantsAwaitingReview.set(review)
+  oldestOverdueSeconds.set(
+    oldest?.post.scheduledAt
+      ? Math.round((now.getTime() - oldest.post.scheduledAt.getTime()) / 1000)
+      : 0
+  )
+}
+
 async function tick(): Promise<void> {
   // FIRST, before anything new is claimed.
   //
@@ -47,15 +123,16 @@ async function tick(): Promise<void> {
   try {
     const recovered = await recoverInterrupted(activePublisher())
     if (recovered.found > 0) {
-      console.warn(
-        `recovery: ${recovered.found} interrupted publish(es) — ` +
-          `${recovered.republishAvoided} already live (not republished), ` +
-          `${recovered.requeued} confirmed absent and requeued, ` +
-          `${recovered.needsReview} awaiting a human, ${recovered.skipped} left for the next sweep`
-      )
+      workerLog.warn('interrupted publishes recovered', {
+        found: recovered.found,
+        alreadyLive: recovered.republishAvoided,
+        requeued: recovered.requeued,
+        awaitingHuman: recovered.needsReview,
+        deferred: recovered.skipped,
+      })
     }
   } catch (err) {
-    console.error('recovery sweep failed:', err instanceof Error ? err.message : err)
+    workerLog.error('recovery sweep failed', { err })
   }
 
   let result
@@ -64,7 +141,7 @@ async function tick(): Promise<void> {
   } catch (err) {
     if (err instanceof ClockWentBackwards) {
       // Loud, and we skip the tick rather than risk re-claiming published rows.
-      console.error(err.message)
+      workerLog.error('clock went backwards; skipping this tick', { err })
       return
     }
     throw err
@@ -73,26 +150,35 @@ async function tick(): Promise<void> {
   if (result.backlog) {
     // Silence during recovery is worse than a warning: somebody watching a
     // backlog drain needs to know it is draining.
-    console.warn(
-      `backlog: more posts are due than one tick can claim. Draining oldest-first at ` +
-        `${TICK_MS / 1000}s intervals.`
-    )
+    workerLog.warn('backlog: more posts are due than one tick can claim', {
+      drainIntervalSeconds: TICK_MS / 1000,
+    })
   }
 
   for (const variant of result.missed) {
-    console.warn(`variant ${variant.id} missed its window and awaits a human decision`)
+    workerLog.warn('variant missed its window', { variantId: variant.id })
   }
 
   for (const variant of result.claimed) {
     try {
+      const startedAt = Date.now()
       const status = await publishVariant(variant.workspaceId, variant.id)
-      console.log(`variant ${variant.id} -> ${status}`)
+      workerLog.info('variant settled', {
+        variantId: variant.id,
+        status,
+        durationMs: Date.now() - startedAt,
+      })
+
 
       if (status === 'PUBLISHED') {
         // latenessSeconds is always recorded; publishedLate only when the
         // delay exceeds what the tick rate itself explains. See
         // Scanner.isNotablyLate.
         const late = Scanner.lateness(variant.scheduledAt, new Date())
+        // Observed for EVERY publish, including on-time ones. A histogram fed
+        // only its outliers cannot say what normal looks like, which is the
+        // question you actually have during an incident.
+        publishLateness.observe(Math.max(0, late))
         if (late > 0) {
           await withTenant(variant.workspaceId, async (tx) => {
             await tx.postVariant.update({
@@ -105,7 +191,7 @@ async function tick(): Promise<void> {
     } catch (err) {
       // One variant failing must never stop the sweep — the other channels in
       // this batch have nothing to do with it.
-      console.error(`variant ${variant.id} threw:`, err instanceof Error ? err.message : err)
+      workerLog.error('variant threw', { variantId: variant.id, err })
     }
   }
 
@@ -116,13 +202,14 @@ async function tick(): Promise<void> {
   try {
     const inbox = await dispatchInbound()
     if (inbox.processed + inbox.failed > 0) {
-      console.log(
-        `inbox: processed ${inbox.processed}, failed ${inbox.failed}, ` +
-          `${inbox.messages} new message${inbox.messages === 1 ? '' : 's'}`
-      )
+      workerLog.info('inbound dispatched', {
+        processed: inbox.processed,
+        failed: inbox.failed,
+        messages: inbox.messages,
+      })
     }
   } catch (err) {
-    console.error('inbound dispatch failed:', err instanceof Error ? err.message : err)
+    workerLog.error('inbound dispatch failed', { err })
   }
 
   // Metrics ingestion shares the tick. It is cheap because the decaying schedule
@@ -131,10 +218,10 @@ async function tick(): Promise<void> {
   try {
     const metrics = await ingestMetrics()
     if (metrics.collected > 0) {
-      console.log(`metrics: collected ${metrics.collected}, skipped ${metrics.skipped}`)
+      workerLog.info('metrics ingested', { collected: metrics.collected, skipped: metrics.skipped })
     }
   } catch (err) {
-    console.error('metrics ingestion failed:', err instanceof Error ? err.message : err)
+    workerLog.error('metrics ingestion failed', { err })
   }
 
   // Retention, hourly. Last because it is the least urgent thing in the tick
@@ -145,9 +232,9 @@ async function tick(): Promise<void> {
     try {
       const reaped = await runRetention()
       const touched = Object.values(reaped).reduce((a, b) => a + b, 0)
-      if (touched > 0) console.log('retention:', JSON.stringify(reaped))
+      if (touched > 0) workerLog.info('retention swept', reaped)
     } catch (err) {
-      console.error('retention sweep failed:', err instanceof Error ? err.message : err)
+      workerLog.error('retention sweep failed', { err })
     }
   }
 
@@ -157,13 +244,14 @@ async function tick(): Promise<void> {
   try {
     const exported = await runExports()
     if (exported.built + exported.failed + exported.expired > 0) {
-      console.log(
-        `exports: built ${exported.built}, failed ${exported.failed}, ` +
-          `expired ${exported.expired}`
-      )
+      workerLog.info('exports run', {
+        built: exported.built,
+        failed: exported.failed,
+        expired: exported.expired,
+      })
     }
   } catch (err) {
-    console.error('export run failed:', err instanceof Error ? err.message : err)
+    workerLog.error('export run failed', { err })
   }
 
   // Outbound webhooks last: they are the least time-critical work in the tick,
@@ -171,10 +259,14 @@ async function tick(): Promise<void> {
   try {
     const hooks = await dispatchWebhooks()
     if (hooks.sent + hooks.failed > 0) {
-      console.log(`webhooks: sent ${hooks.sent}, failed ${hooks.failed}, disabled ${hooks.disabled}`)
+      workerLog.info('webhooks dispatched', {
+        sent: hooks.sent,
+        failed: hooks.failed,
+        disabled: hooks.disabled,
+      })
     }
   } catch (err) {
-    console.error('webhook dispatch failed:', err instanceof Error ? err.message : err)
+    workerLog.error('webhook dispatch failed', { err })
   }
 
   // RSS is rate-limited internally to one fetch per feed per 15 minutes, so
@@ -182,29 +274,40 @@ async function tick(): Promise<void> {
   try {
     const feeds = await ingestFeeds()
     if (feeds.created > 0) {
-      console.log(`rss: ${feeds.created} new item(s) from ${feeds.feeds} feed(s)`)
+      workerLog.info('rss ingested', { created: feeds.created, feeds: feeds.feeds })
     }
   } catch (err) {
-    console.error('rss ingestion failed:', err instanceof Error ? err.message : err)
+    workerLog.error('rss ingestion failed', { err })
   }
+
+  // Last, so the gauges describe the state the tick LEAVES behind rather than
+  // the one it found. An operator reading "12 overdue" wants to know that 12
+  // are still overdue after a pass, not that 12 were waiting before it ran.
+  await phase('gauges', () => readGauges(new Date()))
 }
 
 async function main(): Promise<void> {
   loadEnv()
-  console.log(`worker started; scanning every ${TICK_MS / 1000}s`)
+  const metricsServer = startMetricsServer()
+  const metricsPort = Number(process.env['WORKER_METRICS_PORT'] ?? 9464)
+  workerLog.info('worker started', { tickSeconds: TICK_MS / 1000, metricsPort })
 
   while (running) {
     const started = Date.now()
     try {
       await tick()
     } catch (err) {
-      console.error('tick failed:', err instanceof Error ? err.message : err)
+      workerLog.error('tick failed', { err })
     }
     const elapsed = Date.now() - started
     await sleep(Math.max(0, TICK_MS - elapsed))
   }
 
-  console.log('worker stopped')
+  // Closed explicitly rather than left to unref(). A scrape arriving during
+  // the drain would answer with numbers from a process that has stopped working,
+  // which is the one moment those numbers are actively misleading.
+  metricsServer.close()
+  workerLog.info('worker stopped')
 }
 
 /**

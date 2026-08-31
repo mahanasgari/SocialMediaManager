@@ -161,6 +161,18 @@ Base: `/api/v1`
 Endpoints for a capability the provider lacks return `422 capability_unsupported` with the provider named. The UI should never call them, because it renders from the capability matrix — but the API refuses regardless.
 
 ### Analytics and reports
+### Operations
+
+| Route | Notes |
+|---|---|
+| `GET /health` | Per-dependency status, plus whether RLS is actually enforced for the connected role |
+| `GET /metrics` | Prometheus text. Public by design — a scraper has no session and never will. `METRICS_TOKEN`, if set, requires `Authorization: Bearer`; unset on an `https://` origin the API warns on every boot |
+
+The worker exposes its own registry on `WORKER_METRICS_PORT` (default 9464),
+path `/metrics`, with the same optional token. Separate because the two
+processes measure themselves: a worker that has died should disappear from the
+scrape, not be reported as zero by the API.
+
 ### Export
 
 | Route | Notes |

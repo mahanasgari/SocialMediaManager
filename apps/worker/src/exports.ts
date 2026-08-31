@@ -1,6 +1,7 @@
 import { gzipSync } from 'node:zlib'
 import { withScheduler, withTenant } from '@smm/database'
 import { deleteObject, putObject } from '@smm/storage'
+import { exportJobs } from '@smm/observability'
 
 /**
  * Fulfilling a request for a copy of the data.
@@ -86,6 +87,7 @@ export async function runExports(now: Date = new Date()): Promise<ExportResult> 
         })
       })
       result.built += 1
+      exportJobs.inc({ kind: job.kind, outcome: 'built' })
     } catch (err) {
       // The reason is stored on the row, not only logged. Somebody waiting on an
       // export needs to be told what went wrong without asking an operator to
@@ -101,6 +103,7 @@ export async function runExports(now: Date = new Date()): Promise<ExportResult> 
         })
       })
       result.failed += 1
+      exportJobs.inc({ kind: job.kind, outcome: 'failed' })
     }
   }
 
