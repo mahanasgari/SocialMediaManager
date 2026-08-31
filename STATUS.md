@@ -369,6 +369,7 @@ Named plainly so nobody goes looking.
 | **Campaigns, labels, templates, UTM builder** | Phase 8. Not started. |
 | **Export jobs** | Phase 9. Per-workspace and per-subject export are specified, not built. Purge and retention ARE built — see above. |
 | **22 remaining connectors** | Documented skeletons, disabled with a stated reason. |
+| **~~Empty packages~~** | `social`, `analytics` and `notifications` were scaffolded and never filled. Deleted — the code has one consumer each and lives there. See ARCHITECTURE.md. |
 | **Compose stack** | The images build and each process runs, but the containers have not been run together. Blocked on host disk space, not on code. |
 
 ### Deliberately excluded, permanently

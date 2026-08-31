@@ -63,18 +63,31 @@ apps/
 packages/
   database/       Prisma schema, client extensions (tenancy, soft-delete, encryption), migrations, seeds
   auth/           Sessions, argon2id, permission model, authorize()
-  social/         Account lifecycle, capability resolution
   providers/      Per connector: capabilities.ts, limits.ts, media.ts, text.ts, adapter, errors, fixtures
     capabilities/ zero-dependency subpath — browser-importable (capabilities, media and text profiles)
   ratelimit/      Redis token buckets, Lua scripts, adaptive correction
   media/          ffmpeg profiles, transcoding, renditions, probing
   storage/        S3 abstraction, signed URLs, media relay, upload validation
-  analytics/      Normalization, aggregation, snapshots
   publishing/     State machine, status reducer, orchestration, idempotency, reconciliation
-  notifications/  In-app notifications and delivery
   ui/             shadcn-based shared components
   config/         zod env schema, shared tsconfig and eslint, feature flags
 ```
+
+**Three packages this plan named do not exist: `social`, `analytics` and
+`notifications`.** They were scaffolded empty and stayed empty, because the code
+they were meant to hold turned out to have exactly one consumer each and landed
+there instead — account lifecycle in `apps/api/src/providers`, metric
+normalisation in `apps/worker/src/metrics.ts`, notifications in
+`apps/api/src/notifications`.
+
+A package exists to let two consumers share an implementation. Where there is
+one, it adds a build target, an export map and a version boundary in exchange for
+nothing. They are deleted rather than left as placeholders: an empty package
+named after a major subsystem reads as "packaged, not yet filled in" to everyone
+who was not there, which is a claim about the architecture that is not true.
+
+If a second consumer appears — a second process that must normalise metrics, say
+— that is when the package earns its place.
 
 ### Dependency rules — enforced by ESLint, failing CI
 
