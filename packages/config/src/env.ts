@@ -102,6 +102,17 @@ export const envSchema = z
      * disappears without saying so is worse than either explicit choice.
      */
     METRICS_TOKEN: z.string().min(16).optional(),
+
+    // --- connector credentials ---
+    //
+    // Each is optional, and absence means the connector reports itself
+    // UNCONFIGURED rather than broken. That distinction reaches the UI: a
+    // provider nobody has given credentials for is disabled for a different
+    // reason than one that is not built yet, and the person looking at the
+    // screen needs to know which — one they can fix, one they cannot.
+    /** Facebook Pages and Instagram share one Meta app. */
+    META_APP_ID: z.string().min(1).optional(),
+    META_APP_SECRET: z.string().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     const url = new URL(env.PUBLIC_URL)

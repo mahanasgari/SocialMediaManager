@@ -5,16 +5,15 @@ import type { ProviderLimits } from '../limits.js'
 /**
  * Facebook Pages.
  *
- * SKELETON. Requires a Meta app with pages_manage_posts, and App Review before it can post to Pages you do not own.
+ * IMPLEMENTED. Needs META_APP_ID and META_APP_SECRET, and App Review for
+ * pages_manage_posts before it can post to Pages the app does not own.
  *
- * Publishing is two-phase for media: a container is created, then
- * published. The container can fail during processing AFTER we have been told the
- * upload succeeded, which is why `pending` exists on PublishResult.
- *
- * The capability, media and text declarations below are REAL and are used by the
- * composer to preview constraints, even though publishing is blocked. Declaring
- * them now is what makes the eventual implementation a matter of writing the
- * adapter rather than also discovering the rules.
+ * Two capabilities are declared FALSE that Facebook itself supports, and the
+ * reason is the same for both: Reels and Stories are separate resumable-upload
+ * flows against different endpoints (/video_reels, /photo_stories), not a
+ * parameter on a feed post. Declaring them true would put a surface in the
+ * composer that fails at publish time, which is the dead control the honesty
+ * policy exists to prevent. They become true when those flows are written.
  *
  * Confidence is [A] unless a value carries a source URL and retrieval date.
  */
@@ -25,8 +24,10 @@ export const capabilities = {
   carousel: true,
   linkPost: true,
   thread: false,
-  story: true,
-  reel: true,
+  /** See the note above: a separate upload flow, not built. */
+  story: false,
+  /** See the note above: a separate upload flow, not built. */
+  reel: false,
   shortVideo: false,
   livePost: false,
   firstComment: true,
@@ -50,11 +51,27 @@ export const capabilities = {
   revokeToken: true,
 } as const satisfies ProviderCapabilities
 
+/**
+ * Meta rate limits are a POINTS budget, not a request count.
+ *
+ * The published model is roughly 4800 × (engaged users) points per rolling
+ * hour per app, and a write costs several times a read — so a fixed
+ * requests-per-hour number is a simplification. It is deliberately
+ * conservative: exceeding the real limit costs a 4/17/32 error and a cooldown
+ * that affects every account on the app, and the adaptive correction in
+ * packages/ratelimit widens this from observed 429s rather than us guessing
+ * high.
+ *
+ * [V] Rate limiting model — https://developers.facebook.com/docs/graph-api/overview/rate-limiting,
+ * retrieved 2026-08-31.
+ */
 export const limits = {
-  publish: { cost: 1, window: '1h', budget: 200, unit: 'requests' },
-  mediaUpload: { cost: 1, window: '1h', budget: 200, unit: 'requests' },
-  read: { cost: 1, window: '1h', budget: 600, unit: 'requests' },
-  analytics: { cost: 1, window: '1h', budget: 600, unit: 'requests' },
+  publish: { cost: 1, window: '1h', budget: 100, unit: 'requests' },
+  mediaUpload: { cost: 1, window: '1h', budget: 100, unit: 'requests' },
+  read: { cost: 1, window: '1h', budget: 400, unit: 'requests' },
+  analytics: { cost: 1, window: '1h', budget: 400, unit: 'requests' },
+  // App-scoped, not per account. Meta counts against the APP, so applying this
+  // per account would let ten Pages spend ten times the real budget.
   scope: 'app',
   concurrency: { perAccount: 1, perProvider: 4 },
   onProviderLimit: { honorRetryAfter: true, backoffFactor: 0.5, recoverAfter: '15m' },
@@ -73,13 +90,9 @@ export const media: MediaProfiles = {
     maxBytes: 1024 * MB,
     durationSec: { min: 1, max: 7200 },
   },
-  reel: {
-    mime: ['video/mp4'],
-    maxCount: 1,
-    maxBytes: 1024 * MB,
-    aspect: { min: 0.5, max: 0.6 },
-    durationSec: { min: 3, max: 90 },
-  },
+  // No reel profile, deliberately. The capability is false, and a profile for a
+  // surface the composer cannot publish to would describe constraints on
+  // something that does not work.
 }
 
 export const text: TextProfiles = {
@@ -97,10 +110,5 @@ export const text: TextProfiles = {
     maxMentions: null,
     linkHandling: 'counted',
   },
-  reel: {
-    maxLength: 2200,
-    maxHashtags: null,
-    maxMentions: null,
-    linkHandling: 'counted',
-  },
+
 }
