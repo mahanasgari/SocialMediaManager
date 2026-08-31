@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1234 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1259 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -148,9 +148,13 @@ that a skeleton is refused server-side, not merely disabled in the UI.
 
 ### Connectors
 
-Eight implemented: **Facebook Pages, Instagram, Pinterest, YouTube, TikTok**,
-Mastodon, Bluesky, Telegram. Sixteen remain documented skeletons, each disabled
-with a stated reason.
+Nine implemented: **Facebook Pages, Instagram, Pinterest, YouTube, TikTok,
+LinkedIn profiles**, Mastodon, Bluesky, Telegram. Fifteen remain documented
+skeletons, each disabled with a stated reason.
+
+LinkedIn Company Pages stay a skeleton on purpose: they need Marketing Developer
+Platform approval, a manual review with no published timeline. Personal profiles
+are self-serve, which is why they came first.
 
 Facebook and Instagram share one Meta Graph module rather than each carrying a
 copy of the OAuth flow — Instagram Business accounts are reached *through* a
@@ -176,6 +180,32 @@ What the real APIs forced, none of which a mock would have taught:
 uploads now have their own bucket, 1 unit each, 100 per day. Six a day is a
 constraint you design a product around; a hundred is not, and encoding the stale
 number would have deferred publishing that did not need deferring.
+
+#### LinkedIn, and a path that was theoretical until now
+
+LinkedIn is the first connector that **cannot read its own posts back**. The
+self-serve tier grants `w_member_social` and the OIDC scopes and nothing else;
+reading a member's own shares needs `r_member_social`, which is not self-serve.
+
+So `retrievePosts` is `false` — not unimplemented, *unavailable* — and the
+consequence reaches the publishing pipeline rather than only the UI. With no
+read-back there is no way to answer "did that post go out?" after an interrupted
+publish, so exactly-once is genuinely unachievable and an ambiguous publish goes
+to `NEEDS_REVIEW` instead of being retried.
+
+That path was designed at the start of this project for exactly this case and
+had never had a real provider behind it. LinkedIn makes it real.
+
+Three other LinkedIn specifics, each of which would otherwise have been a bug:
+
+- **The post id arrives in the `X-RestLi-Id` header**, with an empty 201 body. A
+  connector that parses the body concludes the publish failed while the post is
+  live — precisely the shape that produces a duplicate.
+- **Scopes are space-separated.** A comma-joined list is silently accepted and
+  the token comes back with no permissions at all, failing later at publish and
+  looking like a problem with the account.
+- **The member id is pairwise**, so it is specific to the app that asked.
+  Changing the client id orphans every connected account, and nothing says so.
 
 #### `notice`: the honesty case that had no home
 
@@ -618,7 +648,7 @@ Named plainly so nobody goes looking.
 |---|---|
 | **Fault-injection harness** | ~~Ranked risk #1, never written.~~ Built — see above. |
 | **Entitlements, feature flags** | Architecture only. |
-| **16 remaining connectors** | Documented skeletons, disabled with a stated reason. |
+| **15 remaining connectors** | Documented skeletons, disabled with a stated reason. |
 | **~~Empty packages~~** | `social`, `analytics` and `notifications` were scaffolded and never filled. Deleted — the code has one consumer each and lives there. See ARCHITECTURE.md. |
 
 ### Deliberately excluded, permanently

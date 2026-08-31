@@ -121,6 +121,9 @@ export const envSchema = z
     /** TikTok calls it a client KEY, not an id. */
     TIKTOK_CLIENT_KEY: z.string().min(1).optional(),
     TIKTOK_CLIENT_SECRET: z.string().min(1).optional(),
+    /** LinkedIn personal profiles. Company Pages need a separate, reviewed app. */
+    LINKEDIN_CLIENT_ID: z.string().min(1).optional(),
+    LINKEDIN_CLIENT_SECRET: z.string().min(1).optional(),
   })
   .superRefine((env, ctx) => {
     const url = new URL(env.PUBLIC_URL)

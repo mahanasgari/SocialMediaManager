@@ -62,6 +62,12 @@ test.describe('connector honesty', () => {
 
     const tiktok = page.getByTestId('provider-tiktok')
     await expect(tiktok.getByText(/audit/i)).toBeVisible()
+
+    // LinkedIn carries one for a different reason: it publishes fine, but the
+    // self-serve tier cannot read posts back, so an interrupted publish is
+    // held for a human rather than retried into a possible duplicate.
+    const linkedin = page.getByTestId('provider-linkedin')
+    await expect(linkedin.getByText(/cannot read your posts back/i)).toBeVisible()
   })
 
   test('a connector with no such caveat carries no notice', async ({ page }) => {
@@ -155,7 +161,7 @@ test.describe('connector honesty', () => {
     }
 
     // The five the roadmap prioritised are built, not documented intentions.
-    for (const id of ['facebook', 'instagram', 'pinterest', 'youtube', 'tiktok']) {
+    for (const id of ['facebook', 'instagram', 'pinterest', 'youtube', 'tiktok', 'linkedin']) {
       expect(providers.find((p) => p.id === id)?.state, `${id} should be implemented`).toBe(
         'implemented'
       )
