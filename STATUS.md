@@ -146,6 +146,51 @@ marking the right section, compose validation against the real capability
 matrix, publishing and drafting, and the connector honesty policy — including
 that a skeleton is refused server-side, not merely disabled in the UI.
 
+### The compose stack, actually run
+
+`docker compose up -d` on an empty machine: **six services healthy in about
+fifteen seconds**, twenty-four migrations applied, first-run bootstrap creating
+the owner account. Verified from a genuine cold start — `down -v` first, so
+Postgres came up with no database at all.
+
+It had never been run end to end before, and running it found three things no
+test could have:
+
+- **The migrate container could not migrate.** `pnpm prune --prod` ran inside
+  the `build` stage, so every stage copying from it got a tree with dev
+  dependencies gone — including migrate, whose whole job is `prisma migrate
+  deploy`. The Prisma CLI is a devDependency. Migrate printed "applying
+  migrations as owner", died with "Command prisma not found", and because every
+  service waits on it completing, **the entire stack refused to start**. The
+  prune is now its own stage: `build` keeps the full tree for the one container
+  that needs a build tool at runtime, and the long-running services copy a
+  pruned one.
+
+- **Migrating required internet access.** Going through `pnpm exec` made
+  corepack fetch pnpm from registry.npmjs.org on every migration run. On a
+  self-hosted box that may have no outbound access at all, and on any box it is
+  a network round trip standing between the database and the thing that migrates
+  it. The script now calls the Prisma binary directly and the migrate image
+  carries no package manager.
+
+- **Every worker shutdown took twenty seconds and logged a lie.** Nothing closed
+  the Publisher's Redis connection, so the event loop stayed alive after the
+  tick loop ended and the process sat until the forced-exit deadline fired —
+  printing "did not finish in time" about work that had finished. On a rolling
+  deploy that is twenty wasted seconds per worker, every time. Now **0.56s**,
+  exit 0, and the deadline is cancelled on a clean stop. A warning that fires
+  when nothing is wrong is a warning people stop reading.
+
+Verified in the running stack, not inferred:
+
+| | |
+|---|---|
+| Single origin | `:3000` is the only published port. The API answers through the web proxy and **3001 is unreachable from the host** |
+| RLS | `/health` reports `rowLevelSecurity: "enforced"` — the migrate script's owner/app-role split works in the real deployment shape, which is the one place it has been wrong before |
+| Publishing | A due post was claimed by the **worker container** on its own tick and published — `{"msg":"variant settled","status":"PUBLISHED"}` |
+| Metrics | API metrics through the proxy; the worker's on `:9464`, reachable only inside the network |
+| Restart | Whole stack back in 1.8s with data intact |
+
 ### Observability
 
 The admin console answers "is this workspace healthy?" for a person looking at a
@@ -514,7 +559,6 @@ Named plainly so nobody goes looking.
 | **Entitlements, feature flags** | Architecture only. |
 | **22 remaining connectors** | Documented skeletons, disabled with a stated reason. |
 | **~~Empty packages~~** | `social`, `analytics` and `notifications` were scaffolded and never filled. Deleted — the code has one consumer each and lives there. See ARCHITECTURE.md. |
-| **Compose stack** | The images build and each process runs, but the containers have not been run together. Blocked on host disk space, not on code. |
 
 ### Deliberately excluded, permanently
 

@@ -18,8 +18,24 @@ set -eu
 
 SCHEMA=packages/database/prisma/schema.prisma
 
+# The CLI is invoked DIRECTLY rather than through `pnpm exec`, for two reasons.
+#
+# It did not work. `prisma` is a devDependency of packages/database, so pnpm's
+# non-hoisted layout puts the binary in packages/database/node_modules/.bin —
+# and `pnpm exec` from the workspace root looks in the root .bin, finds nothing,
+# and exits with "Command prisma not found". The migrate container died there,
+# and because every service waits on migrate completing, the whole stack
+# refused to start.
+#
+# And it should not need to. Going through pnpm made corepack fetch pnpm from
+# registry.npmjs.org on every migration run, so applying a schema change
+# required outbound internet access — on a self-hosted box that may not have
+# any, and on any box it is a network round trip standing between the database
+# and the thing that migrates it.
+PRISMA=packages/database/node_modules/.bin/prisma
+
 echo "==> applying migrations as owner"
-DATABASE_URL="$MIGRATE_DATABASE_URL" pnpm exec prisma migrate deploy --schema "$SCHEMA"
+DATABASE_URL="$MIGRATE_DATABASE_URL" "$PRISMA" migrate deploy --schema "$SCHEMA"
 
 APP_USER="${APP_DB_USER:-smm_app_user}"
 APP_PASSWORD="${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set}"
@@ -27,7 +43,7 @@ APP_PASSWORD="${APP_DB_PASSWORD:?APP_DB_PASSWORD must be set}"
 echo "==> ensuring unprivileged application role '$APP_USER'"
 # prisma db execute is used rather than psql so the image needs no postgres
 # client package.
-cat <<SQL | DATABASE_URL="$MIGRATE_DATABASE_URL" pnpm exec prisma db execute --stdin --schema "$SCHEMA"
+cat <<SQL | DATABASE_URL="$MIGRATE_DATABASE_URL" "$PRISMA" db execute --stdin --schema "$SCHEMA"
 DO \$\$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$APP_USER') THEN

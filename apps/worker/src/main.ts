@@ -9,7 +9,7 @@ import {
 } from '@smm/observability'
 import { db, withScheduler, withTenant } from '@smm/database'
 import { Scanner, ClockWentBackwards } from './scanner.js'
-import { publishVariant, activePublisher } from './publisher.js'
+import { publishVariant, activePublisher, closePublisher } from './publisher.js'
 import { recoverInterrupted } from './recovery.js'
 import { ingestMetrics } from './metrics.js'
 import { dispatchWebhooks } from './webhooks.js'
@@ -333,9 +333,21 @@ function sleep(ms: number): Promise<void> {
 
 let wake: (() => void) | null = null
 
+/**
+ * The deadline that fires if a tick will not end.
+ *
+ * Held at module scope so a clean shutdown can CANCEL it. Left uncancelled it
+ * fired on every ordinary stop — the loop had already exited and the process
+ * was simply waiting on an open Redis socket, so every restart took the full
+ * twenty seconds and logged "did not finish in time" about work that had
+ * finished. A warning that fires when nothing is wrong is a warning people stop
+ * reading.
+ */
+let forceExit: NodeJS.Timeout | null = null
+
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.on(signal, () => {
-    console.log(`${signal} received; finishing the current tick then stopping`)
+    workerLog.info('shutdown signal received; finishing the current tick', { signal })
     running = false
     // Cuts the idle wait short. A tick already in progress still finishes — a
     // publish interrupted mid-flight is exactly what the write-ahead attempt
@@ -346,16 +358,31 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     // A publish can legitimately take longer than an orchestrator will wait, so
     // this is a bound rather than a promise. Anything still in flight at this
     // point is left to reconciliation on the next start.
-    setTimeout(() => {
-      console.warn('did not finish in time; exiting anyway')
+    forceExit = setTimeout(() => {
+      workerLog.warn('a tick did not finish in time; exiting anyway', {
+        note: 'anything still in flight is recovered by the reconciler on the next start',
+      })
       process.exit(0)
-    }, 20_000).unref()
+    }, 20_000)
+    forceExit.unref()
   })
 }
 
 main()
-  .catch((err) => {
-    console.error('worker failed to start:', err instanceof Error ? err.message : err)
+  .then(async () => {
+    // Every long-lived handle, explicitly. The Redis connection inside the
+    // Publisher is the one that mattered: nothing closed it, so the event loop
+    // stayed alive after the tick loop ended and the process sat there until
+    // the forced-exit deadline. On a rolling deploy that is twenty wasted
+    // seconds per worker, every time.
+    if (forceExit) clearTimeout(forceExit)
+    await closePublisher()
+    await db().$disconnect()
+    workerLog.info('shutdown complete')
+    process.exit(0)
+  })
+  .catch(async (err) => {
+    workerLog.fatal('worker failed', { err })
+    await db().$disconnect().catch(() => undefined)
     process.exit(1)
   })
-  .finally(() => db().$disconnect())

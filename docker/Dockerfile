@@ -43,6 +43,8 @@ RUN pnpm --filter @smm/database exec prisma generate
 # a container — and a build step that works locally and not in CI is worse than
 # an explicit list.
 RUN pnpm --filter @smm/config      build \
+ && pnpm --filter @smm/content     build \
+ && pnpm --filter @smm/observability build \
  && pnpm --filter @smm/auth        build \
  && pnpm --filter @smm/integrations build \
  && pnpm --filter @smm/mail        build \
@@ -62,8 +64,19 @@ ARG INTERNAL_API_URL=http://api:3001
 ENV INTERNAL_API_URL=${INTERNAL_API_URL}
 RUN pnpm --filter @smm/web build
 
-# Drops dev dependencies from node_modules in place, so the runtime stages copy
-# only what production actually needs.
+# ---------- production dependency tree ----------
+# A SEPARATE STAGE, and that is the whole point.
+#
+# Pruning in place inside `build` meant every stage that copied from it got a
+# tree with the dev dependencies gone — including migrate, whose entire job is
+# to run `prisma migrate deploy`. The Prisma CLI is a devDependency, so the
+# migrate container started, printed "applying migrations as owner", and died
+# with "Command prisma not found". Every other service depends on migrate
+# completing, so the whole stack refused to come up.
+#
+# Splitting it means `build` keeps the full tree for the one stage that needs a
+# build tool at runtime, and the long-running services still copy a pruned one.
+FROM build AS pruned
 RUN pnpm prune --prod
 
 # ---------- runtime base ----------
@@ -84,7 +97,9 @@ ENTRYPOINT ["/sbin/tini", "--"]
 # A one-shot. Everything else waits for it to exit 0, so a first boot is one
 # command and a schema change cannot race the processes that depend on it.
 FROM runtime AS migrate
-RUN corepack enable
+# No corepack. migrate.sh calls the Prisma binary directly, so this container
+# needs no package manager and makes no network call to npm in order to apply
+# a schema change.
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/packages/database ./packages/database
@@ -95,22 +110,22 @@ CMD ["/usr/local/bin/migrate.sh"]
 
 # ---------- api ----------
 FROM runtime AS api
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/apps/api/dist ./apps/api/dist
-COPY --from=build /app/apps/api/package.json ./apps/api/
-COPY --from=build /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=pruned /app/node_modules ./node_modules
+COPY --from=pruned /app/packages ./packages
+COPY --from=pruned /app/apps/api/dist ./apps/api/dist
+COPY --from=pruned /app/apps/api/package.json ./apps/api/
+COPY --from=pruned /app/apps/api/node_modules ./apps/api/node_modules
 USER node
 EXPOSE 3001
 CMD ["node", "apps/api/dist/main.js"]
 
 # ---------- worker ----------
 FROM runtime AS worker
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/apps/worker/dist ./apps/worker/dist
-COPY --from=build /app/apps/worker/package.json ./apps/worker/
-COPY --from=build /app/apps/worker/node_modules ./apps/worker/node_modules
+COPY --from=pruned /app/node_modules ./node_modules
+COPY --from=pruned /app/packages ./packages
+COPY --from=pruned /app/apps/worker/dist ./apps/worker/dist
+COPY --from=pruned /app/apps/worker/package.json ./apps/worker/
+COPY --from=pruned /app/apps/worker/node_modules ./apps/worker/node_modules
 USER node
 CMD ["node", "apps/worker/dist/main.js"]
 
@@ -120,7 +135,7 @@ CMD ["node", "apps/worker/dist/main.js"]
 # static assets are copied in by apps/web/scripts/prepare-standalone.mjs —
 # without that step the site boots and renders with no CSS.
 FROM runtime AS web
-COPY --from=build /app/apps/web/.next/standalone ./
+COPY --from=pruned /app/apps/web/.next/standalone ./
 USER node
 EXPOSE 3000
 ENV PORT=3000 HOSTNAME=0.0.0.0
@@ -128,15 +143,15 @@ CMD ["node", "apps/web/server.js"]
 
 # ---------- all-in-one ----------
 FROM runtime AS all-in-one
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/apps/api/dist ./apps/api/dist
-COPY --from=build /app/apps/api/package.json ./apps/api/
-COPY --from=build /app/apps/api/node_modules ./apps/api/node_modules
-COPY --from=build /app/apps/worker/dist ./apps/worker/dist
-COPY --from=build /app/apps/worker/package.json ./apps/worker/
-COPY --from=build /app/apps/worker/node_modules ./apps/worker/node_modules
-COPY --from=build /app/apps/web/.next/standalone ./web-standalone
+COPY --from=pruned /app/node_modules ./node_modules
+COPY --from=pruned /app/packages ./packages
+COPY --from=pruned /app/apps/api/dist ./apps/api/dist
+COPY --from=pruned /app/apps/api/package.json ./apps/api/
+COPY --from=pruned /app/apps/api/node_modules ./apps/api/node_modules
+COPY --from=pruned /app/apps/worker/dist ./apps/worker/dist
+COPY --from=pruned /app/apps/worker/package.json ./apps/worker/
+COPY --from=pruned /app/apps/worker/node_modules ./apps/worker/node_modules
+COPY --from=pruned /app/apps/web/.next/standalone ./web-standalone
 COPY docker/all-in-one.sh /usr/local/bin/all-in-one.sh
 RUN chmod +x /usr/local/bin/all-in-one.sh
 USER node
