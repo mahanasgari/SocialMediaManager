@@ -683,9 +683,12 @@ model Notification {
   href        String?
   readAt      DateTime?
   createdAt   DateTime  @default(now())
+  /// See WebhookDelivery.dedupeKey — same reason, same at-least-once guarantee.
+  dedupeKey   String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@unique([dedupeKey])
   @@index([userId, readAt, createdAt])
   @@index([workspaceId, createdAt])
 }
@@ -750,9 +753,20 @@ model WebhookDelivery {
   deliveredAt    DateTime?
   nextRetryAt    DateTime?
   createdAt      DateTime  @default(now())
+  /// Natural key for the side effect that produced this row.
+  ///
+  /// Outbox delivery is at-least-once by design: the dispatcher can crash after
+  /// writing this row and before marking the event dispatched, and the only safe
+  /// response is to run again. Without this, running again sends the same event
+  /// a second time. With it, the unique index turns the retry into a no-op.
+  ///
+  /// Nullable, because rows created by anything other than the dispatcher have
+  /// no such key and must not be forced to invent one.
+  dedupeKey      String?
 
   webhook Webhook @relation(fields: [webhookId], references: [id], onDelete: Cascade)
 
+  @@unique([dedupeKey])
   @@index([webhookId, createdAt])
   @@index([workspaceId, createdAt])
   @@index([deliveredAt, nextRetryAt])

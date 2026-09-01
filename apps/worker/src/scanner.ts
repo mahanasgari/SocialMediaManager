@@ -1,5 +1,5 @@
 import { loadEnv } from '@smm/config'
-import { withScheduler } from '@smm/database'
+import { outbox, withScheduler } from '@smm/database'
 
 /**
  * The scheduler scanner.
@@ -131,6 +131,24 @@ export class Scanner {
         lastErrorCode: 'MISSED',
       },
     })
+
+    // Emitted in the SAME transaction as the status change, so a post cannot be
+    // marked MISSED without the notification that says so also being durable.
+    //
+    // This is the event that most needs to arrive. MISSED is terminal and
+    // deliberately never auto-retried — the correct action is editorial — so if
+    // nobody is told, a post simply does not go out and nothing anywhere says
+    // why. One event per variant rather than one per batch: a subscriber wants
+    // to know which post, not that some number of them were missed.
+    for (const variant of variants) {
+      await outbox.emit(tx, {
+        aggregateType: 'PostVariant',
+        aggregateId: variant.id,
+        eventType: 'post.missed',
+        workspaceId: variant.workspaceId,
+        payload: { variantId: variant.id, scheduledAt: variant.scheduledAt.toISOString() },
+      })
+    }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -13,6 +13,7 @@ import { publishVariant, activePublisher, closePublisher } from './publisher.js'
 import { recoverInterrupted } from './recovery.js'
 import { ingestMetrics } from './metrics.js'
 import { dispatchWebhooks } from './webhooks.js'
+import { dispatchOutbox } from './outbox.js'
 import { ingestFeeds } from './rss.js'
 import { dispatchInbound } from './inbox.js'
 import { runRetention } from './retention.js'
@@ -252,6 +253,29 @@ async function tick(): Promise<void> {
     }
   } catch (err) {
     workerLog.error('export run failed', { err })
+  }
+
+  // The outbox drain, BEFORE the webhook sender.
+  //
+  // Ordering matters: the drain is what turns a committed event into the
+  // delivery rows the sender then delivers. Running it after would add a full
+  // tick of latency to every notification for no reason.
+  //
+  // It runs late in the tick regardless, because publishing is what people are
+  // waiting on and an event that is thirty seconds old is still fresh.
+  try {
+    const drained = await dispatchOutbox()
+    if (drained.claimed > 0) {
+      workerLog.info('outbox drained', {
+        claimed: drained.claimed,
+        dispatched: drained.dispatched,
+        failed: drained.failed,
+        deliveries: drained.deliveries,
+        notifications: drained.notifications,
+      })
+    }
+  } catch (err) {
+    workerLog.error('outbox drain failed', { err })
   }
 
   // Outbound webhooks last: they are the least time-critical work in the tick,

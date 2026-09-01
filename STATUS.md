@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1259 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1269 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -74,6 +74,58 @@ Three bugs were found by looking at the running app rather than the code:
   always undefined for `/w/:id/posts`; the section is at index 3.
 - **`asChild` buttons threw at runtime.** Radix's Slot requires exactly one
   child and counts the `false` that `{loading && …}` evaluates to.
+
+### The transactional outbox, finally connected
+
+The architecture called this load-bearing and it was dead code. The `Outbox`
+table existed, `emit`, `claimPending`, `markDispatched` and `markFailed` all
+existed — and **nothing called any of them.** The module was not even exported
+from `@smm/database`.
+
+The visible consequence was worse than a missing feature. The integrations page
+let a workspace subscribe a webhook to `post.published`, showed it enabled, and
+it could never fire: nothing emitted a domain event, so no delivery row was ever
+created. A configured, enabled, permanently silent subscription is exactly the
+kind of thing the honesty policy exists to prevent, and it had been sitting
+there since Phase 10.
+
+**Producers.** `post.published` and `post.failed` are emitted by the publishing
+pipeline, `post.missed` by the scanner — each inside the transaction that
+records the outcome it describes. That placement is the mechanism, not a detail:
+emit after the commit and there is a window where the post is live and the event
+never happened; emit before, and a rolled-back write leaves a subscriber told
+about something that did not occur. A test asserts both directions.
+
+**The dispatcher** drains committed events into two consumers and does nothing
+else — no HTTP, because a dispatcher making network calls holds a transaction
+open across the internet. Webhook deliveries go to subscribed endpoints only.
+Notifications go only to people who can *act*: `post.missed` and `post.failed`
+reach OWNER/ADMIN/MANAGER/EDITOR, and `post.published` deliberately notifies
+nobody — a notice per publish is a hundred a day on an active workspace, and the
+ones that matter drown.
+
+**At-least-once is a requirement on consumers, not a caveat.** The dispatcher
+can crash after writing a delivery row and before marking the event dispatched,
+and the only safe response is to run again. Both consumers carry a `dedupeKey`
+derived from the event and the recipient, with a unique index, so a redelivery
+collides instead of duplicating. There is a test that simulates exactly that
+crash.
+
+#### Two bugs it surfaced immediately
+
+**The webhook sender had never run.** No delivery row had ever existed, so its
+failure path was unexecuted code. On the first real delivery it threw
+`PrismaClientKnownRequestError: No record was found for an update` — the
+dispatcher held `SELECT` on `Webhook` but calls `update()` to track
+`consecutiveFailures` and disable a dead endpoint. RLS filtered the row away and
+Prisma reported it as missing. That is the **sixth** appearance of the
+narrow-actor pattern in this codebase, and the first that failed loudly rather
+than returning nothing.
+
+**A test of mine assumed tenancy applied to `Outbox`.** It does not — the table
+is deliberately exempt, because the dispatcher must see every workspace. A count
+inside `withTenant()` therefore counts the whole deployment. Worth recording,
+because the same trap waits for anything that reads this table next.
 
 ### Connectors
 

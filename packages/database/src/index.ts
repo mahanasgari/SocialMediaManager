@@ -41,3 +41,8 @@ export type { KeyProvider, Envelope } from './encryption.js'
 
 export { seedDemo } from './seed-demo.js'
 export type { SeedResult } from './seed-demo.js'
+
+// The transactional outbox. Producers call emit() inside their own
+// transaction; the worker drains it.
+export * as outbox from './outbox.js'
+export type { OutboxEvent, PendingOutboxRow } from './outbox.js'

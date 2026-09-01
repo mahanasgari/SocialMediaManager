@@ -1,6 +1,6 @@
 import { Redis } from 'ioredis'
 import { loadEnv } from '@smm/config'
-import { decrypt, keyProvider, withTenant } from '@smm/database'
+import { decrypt, keyProvider, outbox, withTenant } from '@smm/database'
 import { ProviderError, registry, windowMs, type AnyProvider } from '@smm/providers'
 import { publicUrlFor } from '@smm/storage'
 import { AccountMutex, RateLimiter, type BudgetSpec } from '@smm/ratelimit'
@@ -674,6 +674,21 @@ export class Publisher {
         data: { status: attemptStatus, finishedAt: new Date(), providerResponseId: remoteId },
       })
       await this.refreshPostStatus(tx, variantId)
+
+      // INSIDE the transaction that marked the variant published.
+      //
+      // That placement is the whole mechanism. Emitting after the commit leaves
+      // a window where the post is live and the event never happened, so a
+      // subscriber is told nothing and nobody finds out — the failure the
+      // outbox exists to close. Committing together makes the event as durable
+      // as the fact it describes.
+      await outbox.emit(tx, {
+        aggregateType: 'PostVariant',
+        aggregateId: variantId,
+        eventType: 'post.published',
+        workspaceId,
+        payload: { variantId, remoteId, remoteUrl: remoteUrl ?? null, reconciled: attemptStatus === 'RECONCILED' },
+      })
     })
   }
 
@@ -710,6 +725,16 @@ export class Publisher {
         data: { status: 'FAILED', finishedAt: new Date(), errorCode: code },
       })
       await this.refreshPostStatus(tx, variantId)
+
+      await outbox.emit(tx, {
+        aggregateType: 'PostVariant',
+        aggregateId: variantId,
+        eventType: 'post.failed',
+        workspaceId,
+        // The MESSAGE, not only the code. A subscriber that has to look up what
+        // ContentRejected means is a subscriber that will not bother.
+        payload: { variantId, code, message },
+      })
     })
     return 'FAILED'
   }
