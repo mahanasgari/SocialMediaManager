@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@smm/config": "workspace:*",
+    "@smm/content": "workspace:*",
     "@smm/observability": "workspace:*",
     "@smm/database": "workspace:*",
     "@smm/providers": "workspace:*",

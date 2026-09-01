@@ -14,6 +14,7 @@ import { recoverInterrupted } from './recovery.js'
 import { ingestMetrics } from './metrics.js'
 import { dispatchWebhooks } from './webhooks.js'
 import { dispatchOutbox } from './outbox.js'
+import { expandRecurrences } from './recurrence.js'
 import { ingestFeeds } from './rss.js'
 import { dispatchInbound } from './inbox.js'
 import { runRetention } from './retention.js'
@@ -194,6 +195,28 @@ async function tick(): Promise<void> {
       // this batch have nothing to do with it.
       workerLog.error('variant threw', { variantId: variant.id, err })
     }
+  }
+
+  // Recurrence expansion, after publishing and before everything else.
+  //
+  // After, because a post due right now matters more than one due in six
+  // weeks. Before the rest, because the calendar looking empty is the thing a
+  // person notices first, and expansion is what fills it.
+  //
+  // Cheap on the passes where nothing is due: one indexed query that returns
+  // no rows, because every rule already reaches past the horizon.
+  try {
+    const expanded = await expandRecurrences()
+    if (expanded.created > 0 || expanded.failed > 0) {
+      workerLog.info('recurring schedules expanded', {
+        rules: expanded.rules,
+        created: expanded.created,
+        alreadyPresent: expanded.skipped,
+        failed: expanded.failed,
+      })
+    }
+  } catch (err) {
+    workerLog.error('recurrence expansion failed', { err })
   }
 
   // Inbound dispatch runs BEFORE metrics and webhooks. A person waiting on a

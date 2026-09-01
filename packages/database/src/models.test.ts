@@ -49,6 +49,7 @@ describe('tenant model derivation', () => {
       'PublishAttempt',
       'RSSFeed',
       'RSSItem',
+      'Recurrence',
       'SocialAccount',
       'SyncCursor',
       'Template',

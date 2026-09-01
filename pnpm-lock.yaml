@@ -196,6 +196,9 @@ importers:
       '@smm/config':
         specifier: workspace:*
         version: link:../../packages/config
+      '@smm/content':
+        specifier: workspace:*
+        version: link:../../packages/content
       '@smm/database':
         specifier: workspace:*
         version: link:../../packages/database

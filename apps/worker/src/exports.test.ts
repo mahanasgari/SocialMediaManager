@@ -1,5 +1,5 @@
 import { gunzipSync } from 'node:zlib'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import {
   createTestClient,
   withOrganization,
@@ -130,6 +130,20 @@ suite('building an export', () => {
       }
     })
   }, 60_000)
+
+  beforeEach(async () => {
+    // Every PENDING job, deployment-wide.
+    //
+    // runExports processes ONE job per call across all workspaces, because an
+    // export reads a year of history in a pass and must not own the tick. That
+    // makes these tests quietly dependent on no other job being queued: a
+    // leftover from an interrupted run is claimed first, and the test then
+    // finds its own job still PENDING. It passed for weeks and then failed for
+    // reasons that had nothing to do with the code under test.
+    await withSystemScope('export test reset', async () => {
+      await client.exportJob.deleteMany({ where: { status: 'PENDING' } })
+    })
+  })
 
   afterAll(async () => {
     await withSystemScope('export teardown', async () => {

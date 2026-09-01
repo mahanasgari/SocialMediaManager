@@ -25,6 +25,7 @@ import { ApiKeysController } from './platform/api-keys.controller.js'
 import { IntegrationsController } from './platform/integrations.controller.js'
 import { LinksController } from './links/links.controller.js'
 import { OrganisationController } from './organisation/organisation.controller.js'
+import { RecurrenceController } from './recurrence/recurrence.controller.js'
 import { ExportsController } from './exports/exports.controller.js'
 import { ReportsController } from './reports/reports.controller.js'
 import { ApprovalsController } from './approvals/approvals.controller.js'
@@ -66,6 +67,7 @@ import { MetricsController } from './health/metrics.controller.js'
     InboxController,
     InboundController,
     OrganisationController,
+    RecurrenceController,
     ExportsController,
     AdminController,
     HealthController,

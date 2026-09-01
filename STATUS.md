@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1269 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1315 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -74,6 +74,66 @@ Three bugs were found by looking at the running app rather than the code:
   always undefined for `/w/:id/posts`; the section is at index 3.
 - **`asChild` buttons threw at runtime.** Radix's Slot requires exactly one
   child and counts the `false` that `{loading && …}` evaluates to.
+
+### Recurring schedules
+
+"Post every weekday at 09:00" — the most-asked-for thing a scheduler does, and
+the place scheduling software most often breaks quietly.
+
+**A rule stores a wall-clock time and an IANA zone, never an instant plus an
+interval.** That distinction is the whole design. Stored as "this moment, every
+24 hours", a schedule works perfectly until a daylight-saving boundary, after
+which every post lands an hour out — forever — and nothing reports a problem.
+Storing "09:00 Europe/Berlin" and converting at expansion time keeps 09:00 at
+09:00, which is what the person meant.
+
+Verified in real data rather than asserted. A daily 09:00 Berlin rule spanning
+the October transition:
+
+| UTC instant | Berlin |
+|---|---|
+| `2026-10-24T07:00Z` | Sat 24 Oct, 09:00 |
+| `2026-10-25T08:00Z` | Sun 25 Oct, 09:00 |
+| `2026-10-26T08:00Z` | Mon 26 Oct, 09:00 |
+
+The instant moves; the clock does not.
+
+**The two boundary cases have no single right answer, so each picks one and says
+so.** The hour that does not exist (02:30 on a spring-forward night) fires at
+03:30 rather than vanishing — a skipped post gives the author no signal at all.
+The hour that happens twice takes the earlier. Getting both right needed
+*sampling* the offset either side of the date rather than iterating one guess:
+an ambiguous time has two valid answers and a nonexistent one has none, and no
+amount of refining a single guess distinguishes those. The first implementation
+returned the later instant on fall-back, and the test caught it.
+
+Thirty-three unit tests cover the arithmetic, including half-hour zones
+(Kolkata), three-quarter-hour zones (Kathmandu), the engine quirk that renders
+midnight as hour 24, and the far-east window boundary where an instant inside
+the range has a local date outside it.
+
+**Expansion is a worker job on a rolling sixty-day horizon**, and it produces
+ORDINARY scheduled posts. Nothing publishes a rule — the scanner never learns
+one exists — so recurrence adds one job and changes nothing about publishing,
+retries, reconciliation or the calendar. The consequence people feel is that a
+generated post can be edited: change next Tuesday's wording, drag it an hour
+later, and it stays changed, because it is a real row rather than a projection.
+
+Idempotency is enforced by a unique index on `(recurrenceId, occurrenceAt)`
+rather than by checking first. This runs on every tick of every worker against
+deliberately overlapping windows; a check-then-insert is a race, and a collision
+here is the steady state rather than an error. Eleven integration tests cover
+that, including a simulated crash between creating the posts and recording how
+far expansion got.
+
+Two decisions worth stating, because both could reasonably go the other way:
+
+- **Monthly on the 31st skips short months** instead of clamping to the 30th.
+  Clamping posts on a date nobody chose, and in February moves it by three days.
+  The form warns before the choice is made.
+- **Deleting a schedule keeps its posts** by default, with "delete and clear
+  upcoming" as a separate button. Most people mean "stop making new ones", and
+  erasing next month's calendar is not a recoverable surprise.
 
 ### The transactional outbox, finally connected
 

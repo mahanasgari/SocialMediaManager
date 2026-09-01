@@ -103,6 +103,8 @@ model Workspace {
   templates  Template[]
   utmPresets UtmPreset[]
   exportJobs ExportJob[]
+  recurrences Recurrence[]
+
 
   @@unique([organizationId, slug])
   @@index([organizationId, deletedAt])
@@ -134,6 +136,8 @@ model User {
 
   createdTemplates Template[]
   exportJobs       ExportJob[]
+  recurrences Recurrence[]
+
 
   @@index([email])
 }
@@ -407,9 +411,26 @@ model Post {
   /// real whether or not the campaign that grouped them still exists.
   campaignId String? @db.Uuid
 
+  /// The rule that generated this post, if any.
+  ///
+  /// SetNull rather than Cascade, for the same reason as campaignId: deleting a
+  /// recurring schedule must not delete the posts it already produced. Those
+  /// went out, or are about to, and they belong to the calendar rather than to
+  /// the rule.
+  recurrenceId String? @db.Uuid
+
+  /// The occurrence this post materialises, as an absolute instant.
+  ///
+  /// Stored separately from scheduledAt because the two can legitimately
+  /// diverge: someone may drag a generated post to a different time, and the
+  /// expansion must still recognise that this occurrence is already covered
+  /// rather than creating a second post for it.
+  occurrenceAt DateTime?
+
   workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   author    User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
   campaign  Campaign?     @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  recurrence Recurrence?  @relation(fields: [recurrenceId], references: [id], onDelete: SetNull)
   variants  PostVariant[]
   media     PostMedia[]
   approval  Approval?
@@ -419,6 +440,9 @@ model Post {
   @@index([workspaceId, status, scheduledAt])
   @@index([workspaceId, deletedAt, createdAt])
   @@index([workspaceId, campaignId])
+  /// The expansion job's idempotency. Running it twice for the same occurrence
+  /// must produce one post, not two — and it runs on every worker tick.
+  @@unique([recurrenceId, occurrenceAt])
 }
 
 /// One row per target account. The load-bearing table.
@@ -1239,4 +1263,64 @@ model ExportJob {
 
   @@index([workspaceId, status, createdAt])
   @@index([status, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Recurrence
+// ---------------------------------------------------------------------------
+
+enum RecurrenceFreq {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+/// A repeating schedule, and the template it repeats.
+///
+/// The rule stores a WALL-CLOCK TIME and an IANA ZONE rather than an instant
+/// and an interval. That is the whole design: "09:00 Europe/Berlin" survives a
+/// daylight-saving change, whereas "this instant, every 24 hours" starts
+/// landing an hour out and never stops. See packages/content/src/recurrence.ts.
+///
+/// The template lives on this row rather than pointing at a Post, because a
+/// template Post would appear on the calendar as something publishable and
+/// somebody would eventually publish it.
+model Recurrence {
+  id             String         @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String         @db.Uuid
+  organizationId String         @db.Uuid
+  name           String
+  freq           RecurrenceFreq
+  interval       Int            @default(1)
+  /// 0 is Sunday. Empty means the weekday the rule starts on.
+  byWeekday      Int[]          @default([])
+  /// 1-31, or -1 for the last day of the month.
+  byMonthDay     Int?
+  hour           Int
+  minute         Int
+  /// IANA zone. Not an offset: an offset cannot express "this zone observes DST".
+  timezone       String
+  /// Local calendar dates, 'YYYY-MM-DD'. Not instants — a rule starts on a DAY.
+  startsOn       String
+  endsOn         String?
+  /// What each occurrence publishes.
+  content        String
+  /// Which accounts it goes to. Ids, resolved at expansion so a disconnected
+  /// account produces a post with a missing variant rather than a failed job.
+  accountIds     String[]       @default([])
+  active         Boolean        @default(true)
+  /// How far the expansion has materialised. Lets the job ask only for what is
+  /// new instead of re-walking the whole horizon on every tick.
+  expandedUntil  DateTime?
+  createdById    String?        @db.Uuid
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  deletedAt      DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  posts     Post[]
+
+  @@index([workspaceId, active, deletedAt])
+  @@index([active, expandedUntil])
 }
