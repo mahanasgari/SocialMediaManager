@@ -76,6 +76,33 @@ export class YouTubeProvider implements AnyProvider {
     'https://www.googleapis.com/auth/yt-analytics.readonly',
   ] as const
 
+  /**
+   * Who can see the video, asked every time and never defaulted quietly.
+   *
+   * The API treats a missing privacyStatus as private, which is the safe
+   * choice and also the invisible one: the upload succeeds, an id comes back,
+   * nothing reports a problem, and the video reaches nobody. Someone who
+   * meant to publish would have no signal at all that they had not.
+   *
+   * So it is required. On a connector where each upload costs roughly a sixth
+   * of the daily quota, spending one on a video nobody can see is worth a
+   * deliberate click.
+   */
+  readonly postOptionFields = [
+    {
+      name: 'privacyStatus',
+      label: 'Visibility',
+      required: true,
+      options: [
+        { value: 'private', label: 'Private — only you' },
+        { value: 'unlisted', label: 'Unlisted — anyone with the link' },
+        { value: 'public', label: 'Public — listed and searchable' },
+      ],
+      hint:
+        'An unaudited Google Cloud project can still upload public videos, but the daily quota allows only about six uploads.',
+    },
+  ]
+
   isConfigured(): boolean {
     return this.app() !== null
   }

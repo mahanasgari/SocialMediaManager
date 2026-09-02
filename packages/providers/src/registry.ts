@@ -101,6 +101,7 @@ export type ProviderDescriptor = {
     hint?: string
     placeholder?: string
     required?: boolean
+    options?: readonly { value: string; label: string }[]
   }>
 }
 

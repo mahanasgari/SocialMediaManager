@@ -12,6 +12,7 @@ type ProviderRow = {
     hint?: string
     placeholder?: string
     required?: boolean
+    options?: { value: string; label: string }[]
   }[]
 }
 

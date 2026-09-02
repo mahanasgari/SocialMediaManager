@@ -27,6 +27,7 @@ type PostOptionField = {
   hint?: string
   placeholder?: string
   required?: boolean
+  options?: { value: string; label: string }[]
 }
 
 /**
@@ -380,21 +381,52 @@ export function Composer({
                             {field.label}
                             {field.required && <span className="text-destructive"> *</span>}
                           </label>
-                          <Input
-                            id={`${a.id}-${field.name}`}
-                            value={value}
-                            placeholder={field.placeholder ?? ''}
-                            autoComplete="off"
-                            spellCheck={false}
-                            className="mt-1 h-8 text-sm"
-                            aria-invalid={missing}
-                            onChange={(event) =>
-                              setOptions((prev) => ({
-                                ...prev,
-                                [a.id]: { ...prev[a.id], [field.name]: event.target.value },
-                              }))
-                            }
-                          />
+                          {field.options ? (
+                            <select
+                              id={`${a.id}-${field.name}`}
+                              value={value}
+                              aria-invalid={missing}
+                              className={cn(
+                                'mt-1 h-8 w-full rounded-md border border-input bg-transparent',
+                                'px-2 text-sm shadow-sm transition-colors focus-visible:outline-none',
+                                'focus-visible:ring-2 focus-visible:ring-ring',
+                                missing && 'border-destructive'
+                              )}
+                              onChange={(event) =>
+                                setOptions((prev) => ({
+                                  ...prev,
+                                  [a.id]: { ...prev[a.id], [field.name]: event.target.value },
+                                }))
+                              }
+                            >
+                              {/* No preselected choice. A default here would be
+                                  the product answering a question meant for the
+                                  person — which on YouTube means uploading
+                                  something nobody can see. */}
+                              <option value="">Choose…</option>
+                              {field.options.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <Input
+                              id={`${a.id}-${field.name}`}
+                              value={value}
+                              placeholder={field.placeholder ?? ''}
+                              autoComplete="off"
+                              spellCheck={false}
+                              className="mt-1 h-8 text-sm"
+                              aria-invalid={missing}
+                              onChange={(event) =>
+                                setOptions((prev) => ({
+                                  ...prev,
+                                  [a.id]: { ...prev[a.id], [field.name]: event.target.value },
+                                }))
+                              }
+                            />
+                          )}
                           {field.hint && (
                             <p className="mt-1 text-xs text-muted-foreground">{field.hint}</p>
                           )}

@@ -145,6 +145,15 @@ export type PostOptionField = {
   placeholder?: string
   /** A post cannot be scheduled for this account without it. */
   required?: boolean
+  /**
+   * Fixed choices. Present means the composer renders a select rather than a
+   * text box, and the value sent is always one of these.
+   *
+   * There is no default. A field with choices and no answer is a question the
+   * person has not been asked yet — and silently picking for them is how a
+   * YouTube upload ends up private with nothing on screen saying so.
+   */
+  options?: readonly { value: string; label: string }[]
 }
 
 /** Base surface every adapter implements. */
