@@ -49,7 +49,15 @@ test.describe('exporting data', () => {
     const workspace = workspaceIdFrom(page)
     await page.goto(`/w/${workspace}/exports`)
 
-    await page.getByRole('button', { name: 'Request export' }).click()
+    // Only click when the control is live, exactly as the sibling test below
+    // does. The page disables it while an export is in flight — correct product
+    // behaviour — so a leftover from an earlier run made this wait out the full
+    // timeout against a disabled button and report a product failure that was
+    // nothing of the kind. What this test is actually about is the CARD and
+    // what it says, and that holds whoever queued the job.
+    const request = page.getByRole('button', { name: 'Request export' })
+    await expect(request).toBeVisible({ timeout: 20_000 })
+    if (await request.isEnabled()) await request.click()
 
     const card = page.locator('[data-card="export"]').first()
     await expect(card).toBeVisible({ timeout: 20_000 })

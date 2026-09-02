@@ -71,7 +71,13 @@ test.describe('the application shell', () => {
   test('navigating by clicking works, not just by URL', async ({ page }) => {
     await signIn(page)
 
-    await page.getByRole('link', { name: 'Posts' }).click()
+    // `exact` matters here, and the reason is worth stating: Playwright matches
+    // accessible names as a case-insensitive SUBSTRING by default, so a bare
+    // 'Posts' also matches the dashboard's "Open posts" banner — which appears
+    // only when something failed, was missed, or is held for review. This test
+    // then passed or failed according to whether an earlier run had left a
+    // broken post behind, which is not what it is about.
+    await page.getByRole('link', { name: 'Posts', exact: true }).click()
     await page.waitForURL(/\/posts$/)
     await expect(page.getByRole('heading', { level: 1, name: 'Posts' })).toBeVisible()
 
