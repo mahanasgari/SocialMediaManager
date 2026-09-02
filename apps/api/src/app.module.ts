@@ -34,6 +34,8 @@ import { PublishService } from './posts/publish.service.js'
 import { InboxController } from './inbox/inbox.controller.js'
 import { InboundController } from './inbox/inbound.controller.js'
 import { AdminController } from './admin/admin.controller.js'
+import { ConnectorSettingsController } from './admin/connector-settings.controller.js'
+import { ConnectorSettingsService } from './admin/connector-settings.service.js'
 import { HealthController } from './health/health.controller.js'
 import { MetricsController } from './health/metrics.controller.js'
 
@@ -70,10 +72,12 @@ import { MetricsController } from './health/metrics.controller.js'
     RecurrenceController,
     ExportsController,
     AdminController,
+    ConnectorSettingsController,
     HealthController,
     MetricsController,
   ],
   providers: [
+    ConnectorSettingsService,
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
     { provide: APP_GUARD, useClass: AuthModeGuard },
     { provide: APP_GUARD, useClass: SessionGuard },

@@ -93,6 +93,19 @@ suite('expanding recurring schedules', () => {
       // Posts first: they hold the foreign key.
       await client.post.deleteMany({ where: { workspaceId } })
       await client.recurrence.deleteMany({ where: { workspaceId } })
+
+      // Then every OTHER active rule, deployment-wide.
+      //
+      // expandRecurrences() sweeps the whole deployment — that is what a
+      // scheduler does — so `result.rules` is a deployment-wide count and an
+      // assertion like `toBe(0)` quietly depends on no rule existing anywhere
+      // else. A leftover from a manual session was counted and the test failed
+      // for reasons having nothing to do with the code it covers. Same latent
+      // flaw as exports.test.ts, which processes one job per call globally.
+      await client.recurrence.updateMany({
+        where: { workspaceId: { not: workspaceId }, active: true },
+        data: { active: false },
+      })
     })
   })
 

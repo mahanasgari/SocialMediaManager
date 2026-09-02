@@ -14,6 +14,7 @@ import { recoverInterrupted } from './recovery.js'
 import { ingestMetrics } from './metrics.js'
 import { dispatchWebhooks } from './webhooks.js'
 import { dispatchOutbox } from './outbox.js'
+import { loadConnectorSettings } from '@smm/publishing'
 import { expandRecurrences } from './recurrence.js'
 import { ingestFeeds } from './rss.js'
 import { dispatchInbound } from './inbox.js'
@@ -113,6 +114,29 @@ async function readGauges(now: Date): Promise<void> {
 }
 
 async function tick(): Promise<void> {
+  // Connector credentials first, because everything below may need one.
+  //
+  // The worker is a long-lived process: an administrator who fixes a wrong
+  // Google client secret at noon must not have to restart it. Reloading each
+  // pass is one indexed query over a table with a dozen rows, which is far
+  // cheaper than the alternative — a token refresh failing overnight against
+  // a credential that was corrected hours earlier.
+  //
+  // Failure here is deliberately not fatal. The process keeps the values it
+  // already had, which is strictly better than a tick that publishes nothing
+  // because the settings table was briefly unreachable.
+  try {
+    const settings = await loadConnectorSettings()
+    if (settings.unreadable.length > 0) {
+      workerLog.error('connector settings could not be decrypted', {
+        keys: settings.unreadable,
+        hint: 're-enter them in Settings, or restore ENCRYPTION_KEY_PREVIOUS',
+      })
+    }
+  } catch (err) {
+    workerLog.error('connector settings reload failed', { err })
+  }
+
   // FIRST, before anything new is claimed.
   //
   // A publish that a dead process left in flight is a post that may already be

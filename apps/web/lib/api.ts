@@ -13,6 +13,8 @@ export type Workspace = {
    * reaches the browser is a hint, not a control.
    */
   permissions: string[]
+  /** Whether POST /workspaces would succeed for this user. Org-level, not workspace-level. */
+  canCreateWorkspace: boolean
 }
 
 export type Me = { id: string; email: string; name: string }

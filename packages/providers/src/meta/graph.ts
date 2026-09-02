@@ -1,6 +1,7 @@
 import { assertOutsideTransaction } from '@smm/config'
 import { ProviderError } from '../errors.js'
 import type { ProviderId } from '../capabilities/index.js'
+import { providerSetting } from '../settings.js'
 
 /**
  * The Meta Graph API, shared by Facebook Pages and Instagram.
@@ -32,8 +33,8 @@ export const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`
 
 /** Operator-supplied app credentials. Absent means the connector is unconfigured. */
 export function metaApp(): { appId: string; appSecret: string } | null {
-  const appId = process.env['META_APP_ID']
-  const appSecret = process.env['META_APP_SECRET']
+  const appId = providerSetting('META_APP_ID')
+  const appSecret = providerSetting('META_APP_SECRET')
   if (!appId || !appSecret) return null
   return { appId, appSecret }
 }

@@ -20,6 +20,7 @@ import {
   type VariantDraft,
 } from '../capabilities/index.js'
 import { capabilities, limits, media, text } from './capabilities.js'
+import { providerSetting } from '../settings.js'
 
 const API = 'https://api.pinterest.com/v5'
 
@@ -84,8 +85,8 @@ export class PinterestProvider implements AnyProvider {
   }
 
   private app(): { id: string; secret: string } | null {
-    const id = process.env['PINTEREST_APP_ID']
-    const secret = process.env['PINTEREST_APP_SECRET']
+    const id = providerSetting('PINTEREST_APP_ID')
+    const secret = providerSetting('PINTEREST_APP_SECRET')
     if (!id || !secret) return null
     return { id, secret }
   }
@@ -96,7 +97,7 @@ export class PinterestProvider implements AnyProvider {
       throw new ProviderError(
         this.id,
         'PermanentFailure',
-        'Set PINTEREST_APP_ID and PINTEREST_APP_SECRET to connect Pinterest.'
+        'Pinterest is not configured. Add an app ID and secret in Settings > Connectors, or set PINTEREST_APP_ID and PINTEREST_APP_SECRET.'
       )
     }
 

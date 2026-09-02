@@ -2,6 +2,7 @@ import { apiGet } from '@/lib/server-fetch'
 import { getWorkspace } from '@/lib/api'
 import { Badge, Card, ErrorCard, Muted, PageHeader } from '@/components/ui'
 import { CreateApiKey, RevokeKey } from './api-keys.client'
+import { Connectors, type ConnectorProvider, type ConnectorSetting } from './connectors.client'
 
 type ApiKeyRow = {
   id: string
@@ -12,6 +13,14 @@ type ApiKeyRow = {
   expiresAt: string | null
   revokedAt: string | null
   createdAt: string
+}
+
+type ConnectorSettings = {
+  editable: boolean
+  readOnlyReason?: string
+  redirectUriBase: string
+  settings: ConnectorSetting[]
+  providers: ConnectorProvider[]
 }
 
 export default async function SettingsPage({
@@ -28,6 +37,13 @@ export default async function SettingsPage({
   const keys = canManage
     ? await apiGet<ApiKeyRow[]>(`/api/v1/api-keys?workspaceId=${workspaceId}`)
     : null
+
+  // Organization-level, so the API decides who may see it rather than this
+  // page guessing from a workspace role. A non-admin gets a 404 and the
+  // section simply is not rendered — the same answer the API would give.
+  const connectors = await apiGet<ConnectorSettings>(
+    `/api/v1/connector-settings?organizationId=${workspace.data.organizationId}`
+  )
 
   return (
     <>
@@ -95,6 +111,32 @@ export default async function SettingsPage({
               ))}
             </div>
           )}
+        </section>
+      )}
+
+      {connectors.ok && (
+        <section className="mt-10">
+          <h2 className="text-sm font-medium">Connector credentials</h2>
+          <p className="mt-1 max-w-2xl text-sm">
+            <Muted>
+              The app registrations this installation uses to talk to each network. These are yours,
+              not per-workspace: one Meta app serves every workspace here. Values are encrypted
+              before they are stored and are never sent back to the browser.
+            </Muted>
+          </p>
+
+          <div className="mt-4">
+            <Connectors
+              organizationId={workspace.data.organizationId}
+              redirectUriBase={connectors.data.redirectUriBase}
+              settings={connectors.data.settings}
+              providers={connectors.data.providers}
+              editable={connectors.data.editable}
+              {...(connectors.data.readOnlyReason
+                ? { readOnlyReason: connectors.data.readOnlyReason }
+                : {})}
+            />
+          </div>
         </section>
       )}
     </>

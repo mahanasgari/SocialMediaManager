@@ -1,7 +1,8 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
-import { Check, ChevronsUpDown } from 'lucide-react'
+import { Check, ChevronsUpDown, Plus } from 'lucide-react'
 import type { Workspace } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import {
@@ -9,8 +10,10 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { CreateWorkspaceDialog } from '@/components/create-workspace.client'
 
 /**
  * Workspace is in the PATH, not in a cookie.
@@ -30,6 +33,11 @@ export function WorkspaceSwitcher({
   const router = useRouter()
   const pathname = usePathname()
 
+  // Held HERE rather than inside the menu. Radix unmounts a dropdown’s
+  // children when it closes, so a dialog rendered inside one vanishes the
+  // moment the item that opened it is chosen.
+  const [creating, setCreating] = useState(false)
+
   function switchTo(id: string) {
     if (id === current.id) return
     // Keep the current section, so switching lands on Accounts for the new
@@ -40,42 +48,58 @@ export function WorkspaceSwitcher({
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        className={cn(
-          'flex w-full items-center gap-2 rounded-md border border-input bg-transparent',
-          'px-2 py-1.5 text-sm shadow-sm transition-colors hover:bg-accent',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          'focus-visible:ring-offset-2 focus-visible:ring-offset-background'
-        )}
-        aria-label="Switch workspace"
-      >
-        <span
-          className="flex size-5 shrink-0 items-center justify-center rounded bg-primary/10 text-[10px] font-semibold text-primary"
-          aria-hidden
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          className={cn(
+            'flex w-full items-center gap-2 rounded-md border border-input bg-transparent',
+            'px-2 py-1.5 text-sm shadow-sm transition-colors hover:bg-accent',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+            'focus-visible:ring-offset-2 focus-visible:ring-offset-background'
+          )}
+          aria-label="Switch workspace"
         >
-          {initials(current.name)}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-left font-medium">{current.name}</span>
-        <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
-      </DropdownMenuTrigger>
+          <span
+            className="flex size-5 shrink-0 items-center justify-center rounded bg-primary/10 text-[10px] font-semibold text-primary"
+            aria-hidden
+          >
+            {initials(current.name)}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-left font-medium">{current.name}</span>
+          <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
+        </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="start" className="w-[--radix-dropdown-menu-trigger-width]">
-        <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
-        {workspaces.map((w) => (
-          <DropdownMenuItem key={w.id} onSelect={() => switchTo(w.id)}>
-            <span
-              className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold"
-              aria-hidden
-            >
-              {initials(w.name)}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{w.name}</span>
-            {w.id === current.id && <Check className="size-4 shrink-0" />}
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+        <DropdownMenuContent align="start" className="w-[--radix-dropdown-menu-trigger-width]">
+          <DropdownMenuLabel>Workspaces</DropdownMenuLabel>
+          {workspaces.map((w) => (
+            <DropdownMenuItem key={w.id} onSelect={() => switchTo(w.id)}>
+              <span
+                className="flex size-5 shrink-0 items-center justify-center rounded bg-muted text-[10px] font-semibold"
+                aria-hidden
+              >
+                {initials(w.name)}
+              </span>
+              <span className="min-w-0 flex-1 truncate">{w.name}</span>
+              {w.id === current.id && <Check className="size-4 shrink-0" />}
+            </DropdownMenuItem>
+          ))}
+
+          {/* Rendered only when the API said this person may create one.
+              A control that always fails is worse than no control. */}
+          {current.canCreateWorkspace && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setCreating(true)}>
+                <Plus className="size-4 shrink-0" />
+                <span>New workspace</span>
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <CreateWorkspaceDialog open={creating} onOpenChange={setCreating} />
+    </>
   )
 }
 

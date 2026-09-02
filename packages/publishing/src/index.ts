@@ -21,3 +21,5 @@ export {
 export type { Fingerprint, RemoteCandidate, MatchOptions } from './fingerprint.js'
 
 export { Publisher } from './pipeline.js'
+export { loadConnectorSettings } from './connector-settings.js'
+export type { LoadResult } from './connector-settings.js'

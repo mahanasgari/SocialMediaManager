@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1315 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1333 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -74,6 +74,75 @@ Three bugs were found by looking at the running app rather than the code:
   always undefined for `/w/:id/posts`; the section is at index 3.
 - **`asChild` buttons threw at runtime.** Radix's Slot requires exactly one
   child and counts the `false` that `{loading && …}` evaluates to.
+
+### Administering the installation from the browser
+
+Two things that worked perfectly and that nobody could reach.
+
+**Connector credentials.** Adding a Meta app meant editing `.env.local` and
+restarting three processes. For software that ships as a self-hosted web
+application with an admin console, that is the wrong answer — the person who can
+administer the installation is by definition sitting in a browser. They are now
+set from Settings, and:
+
+- **The environment still wins where it is used.** A deployment injecting
+  secrets from a vault or a Kubernetes secret keeps doing exactly that; those
+  arrangements are better than a database column, not worse, and this must not
+  push anyone into the worse one. The UI is an option for installations with no
+  such machinery. Where both exist, the UI value takes precedence — an
+  administrator who types a value into a form and sees nothing change has been
+  lied to.
+- **Which source is in force is on screen.** `Set here` / `From environment` /
+  `Not set`. Without that, an empty-looking field that is quietly satisfied by
+  an environment variable invites someone to override it without knowing, and
+  then to be unable to explain why clearing the field changed nothing.
+- **Write-only.** No endpoint returns a stored value. What comes back is a
+  hint — the whole value for an app ID, `••••9f3a` for a secret. Enough to
+  answer "is the right one in here?", useless to a thief. App IDs are not masked
+  deliberately: Meta puts them in the redirect URL, and hiding one costs the
+  ability to spot the commonest mistake there is, which is the right value in
+  the wrong field.
+- **Encrypted with the same KEK as OAuth tokens**, through the same envelope
+  scheme, with the same `keyId` rotation story.
+- **The redirect URI is shown ready to copy**, per provider. Every provider
+  console demands an exact match and rejects a mismatch with an error that does
+  not say which side is wrong.
+
+Two decisions worth stating:
+
+- **The keys are an allowlist.** The key is a path parameter, and without a
+  fixed list `PUT /connector-settings/DATABASE_URL` would look like a perfectly
+  ordinary request.
+- **Editing is refused on a multi-organization deployment.** These values are
+  installation-wide, so one org's admin changing a Meta app would repoint every
+  other org's connector at it. `ALLOW_SHARED_CONNECTOR_SETTINGS=true` permits
+  it explicitly — the same shape as the insecure-cookie opt-in. A real
+  deployment shape that should be possible, never a silent one.
+
+**Two RLS actors, not one.** Every process reads these at boot; exactly one code
+path writes one. Sharing an actor would give the analytics job that polls
+Instagram every fifteen minutes UPDATE on the credential authorising it — where
+a bug stops being a crash and becomes a way to repoint the installation's OAuth
+client at somebody else's app, harvesting every future connection without
+breaking anything visible. `app.connector_settings` reads;
+`app.connector_settings_write` writes. Both are tested, including that the read
+actor is refused a write and that a query with no actor at all returns nothing.
+
+**Creating a workspace.** `POST /workspaces` has existed since Phase 1 with no
+control anywhere in the product — the only way to make a second workspace was
+curl. The switcher now has a "New workspace" item, and it appears exactly when
+it will work: the API answers `canCreateWorkspace` from the same organization
+role the POST checks, because creating a workspace is an organization-level act
+and the workspace role can disagree with it.
+
+Verified in a browser rather than asserted: signed in, opened the switcher,
+created a workspace with the timezone the browser guessed, landed inside it;
+then typed a LinkedIn secret into the settings form, watched the connector move
+to *Ready to connect*, and confirmed the plaintext appears nowhere in the served
+HTML while the stored column holds ciphertext. The credential then built a real
+`linkedin.com/oauth/v2/authorization` URL carrying the client ID that had been
+typed in a minute earlier — in a process that had been told, at boot, that
+LinkedIn was unconfigured.
 
 ### Recurring schedules
 

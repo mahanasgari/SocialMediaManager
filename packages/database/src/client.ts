@@ -276,6 +276,46 @@ export function withInboundRouter<T>(fn: (tx: Db) => Promise<T>, client: Db = db
 }
 
 /**
+ * Reading the installation's connector credentials.
+ *
+ * Same shape as every other actor here: a query that legitimately runs before
+ * any tenant exists. These values are deployment-global, and the processes that
+ * need them — the API building an OAuth redirect, the worker refreshing a token
+ * at 3am — have no workspace in hand at boot.
+ *
+ * READ ONLY, and split from the write actor on purpose. The analytics job that
+ * polls Instagram every fifteen minutes needs the client ID; it has no business
+ * holding UPDATE on it. See the migration for the reasoning.
+ */
+export function withConnectorSettings<T>(fn: (tx: Db) => Promise<T>, client: Db = db()): Promise<T> {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.connector_settings', 'on', true)`
+    return scopeStorage.run({ kind: 'system', reason: 'reading connector settings' }, () =>
+      runInTransactionContext({ active: true }, async () => fn(tx as Db))
+    )
+  })
+}
+
+/**
+ * Changing them.
+ *
+ * Exactly one caller: the admin controller, after establishing that the person
+ * asking owns or administers the organization. Kept separate from the read
+ * actor so that grant appears in one place and can be grepped for.
+ */
+export function withConnectorSettingsWrite<T>(
+  fn: (tx: Db) => Promise<T>,
+  client: Db = db()
+): Promise<T> {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.connector_settings_write', 'on', true)`
+    return scopeStorage.run({ kind: 'system', reason: 'changing connector settings' }, () =>
+      runInTransactionContext({ active: true }, async () => fn(tx as Db))
+    )
+  })
+}
+
+/**
  * A public link-in-bio page.
  *
  * /l/:slug is served to anyone, with no session and no tenant context — the

@@ -20,6 +20,7 @@ import {
   type VariantDraft,
 } from '../capabilities/index.js'
 import { capabilities, limits, media, text } from './capabilities.js'
+import { providerSetting } from '../settings.js'
 
 const API = 'https://www.googleapis.com/youtube/v3'
 const UPLOAD = 'https://www.googleapis.com/upload/youtube/v3'
@@ -80,8 +81,8 @@ export class YouTubeProvider implements AnyProvider {
   }
 
   private app(): { id: string; secret: string } | null {
-    const id = process.env['GOOGLE_CLIENT_ID']
-    const secret = process.env['GOOGLE_CLIENT_SECRET']
+    const id = providerSetting('GOOGLE_CLIENT_ID')
+    const secret = providerSetting('GOOGLE_CLIENT_SECRET')
     if (!id || !secret) return null
     return { id, secret }
   }
@@ -101,7 +102,7 @@ export class YouTubeProvider implements AnyProvider {
       throw new ProviderError(
         this.id,
         'PermanentFailure',
-        'Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to connect YouTube.'
+        'YouTube is not configured. Add a Google client ID and secret in Settings > Connectors, or set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.'
       )
     }
 

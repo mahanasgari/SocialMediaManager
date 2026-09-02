@@ -10,6 +10,7 @@ import { Public } from '../auth/auth-mode.guard.js'
 import type { SessionPrincipal } from '../auth/session.service.js'
 import { MembershipService } from '../tenancy/membership.service.js'
 import { ConnectionsService } from './connections.service.js'
+import { ConnectorSettingsService } from '../admin/connector-settings.service.js'
 import {
   createPkce,
   redirectUriFor,
@@ -44,7 +45,8 @@ const connectSchema = z.object({
 export class SocialAccountsController {
   constructor(
     private readonly memberships: MembershipService,
-    private readonly connections: ConnectionsService
+    private readonly connections: ConnectionsService,
+    private readonly connectorSettings: ConnectorSettingsService
   ) {}
 
   @Get()
@@ -68,6 +70,12 @@ export class SocialAccountsController {
   ) {
     if (!principal) throw errors.unauthenticated()
     const input = connectSchema.parse(body)
+
+    // Pick up a credential another API process may have saved seconds ago.
+    // Without this, an administrator who sets a Meta secret and immediately
+    // clicks Connect can be told to set the thing they just set — and the
+    // advice would be wrong, which is worse than no advice.
+    await this.connectorSettings.refreshIfStale()
 
     const access = await this.memberships.requireAccess(principal.userId, input.workspaceId)
     this.require(principal.userId, access.role)

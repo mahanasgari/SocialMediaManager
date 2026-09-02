@@ -20,6 +20,7 @@ import {
   type VariantDraft,
 } from '../capabilities/index.js'
 import { capabilities, limits, media, text } from './capabilities.js'
+import { providerSetting } from '../settings.js'
 
 const API = 'https://open.tiktokapis.com/v2'
 
@@ -87,8 +88,8 @@ export class TikTokProvider implements AnyProvider {
   }
 
   private app(): { key: string; secret: string } | null {
-    const key = process.env['TIKTOK_CLIENT_KEY']
-    const secret = process.env['TIKTOK_CLIENT_SECRET']
+    const key = providerSetting('TIKTOK_CLIENT_KEY')
+    const secret = providerSetting('TIKTOK_CLIENT_SECRET')
     if (!key || !secret) return null
     return { key, secret }
   }
@@ -99,7 +100,7 @@ export class TikTokProvider implements AnyProvider {
       throw new ProviderError(
         this.id,
         'PermanentFailure',
-        'Set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET to connect TikTok.'
+        'TikTok is not configured. Add a client key and secret in Settings > Connectors, or set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET.'
       )
     }
 

@@ -75,6 +75,13 @@ export const envSchema = z
     INTERNAL_API_URL: z.string().url(),
     ALLOW_INSECURE_COOKIES: bool.default('false'),
 
+    // Connector credentials set through the admin UI are DEPLOYMENT-GLOBAL,
+    // so on a deployment hosting several organizations one org's admin
+    // editing them would repoint every other org's connector. Editing is
+    // refused there unless this says otherwise. Same shape as the cookie
+    // opt-in above: a real deployment shape, never a silent one.
+    ALLOW_SHARED_CONNECTOR_SETTINGS: bool.default('false'),
+
     // --- object storage ---
     S3_ENDPOINT: z.string().url(),
     S3_REGION: z.string().min(1).default('us-east-1'),

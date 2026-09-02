@@ -18,6 +18,7 @@ import {
   type VariantDraft,
 } from '../capabilities/index.js'
 import { capabilities, limits, media, text } from './capabilities.js'
+import { providerSetting } from '../settings.js'
 
 const API = 'https://api.linkedin.com'
 const OAUTH = 'https://www.linkedin.com/oauth/v2'
@@ -91,8 +92,8 @@ export class LinkedInProvider implements AnyProvider {
   }
 
   private app(): { id: string; secret: string } | null {
-    const id = process.env['LINKEDIN_CLIENT_ID']
-    const secret = process.env['LINKEDIN_CLIENT_SECRET']
+    const id = providerSetting('LINKEDIN_CLIENT_ID')
+    const secret = providerSetting('LINKEDIN_CLIENT_SECRET')
     if (!id || !secret) return null
     return { id, secret }
   }
@@ -103,7 +104,7 @@ export class LinkedInProvider implements AnyProvider {
       throw new ProviderError(
         this.id,
         'PermanentFailure',
-        'Set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET to connect LinkedIn.'
+        'LinkedIn is not configured. Add a client ID and secret in Settings > Connectors, or set LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET.'
       )
     }
 

@@ -22,6 +22,12 @@ const inviteSchema = z.object({
 
 const INVITE_TTL_DAYS = 14
 
+/** Does this organization role carry the permission? Null role means no. */
+function hasOrgPermission(role: string | null | undefined, permission: Permission): boolean {
+  if (!role) return false
+  return permissionsFor(role as never).includes(permission)
+}
+
 function parse<T>(schema: z.ZodType<T>, body: unknown): T {
   const result = schema.safeParse(body)
   if (result.success) return result.data
@@ -43,6 +49,19 @@ export class WorkspacesController {
     if (!principal) throw errors.unauthenticated()
     const access = await this.memberships.listForUser(principal.userId)
 
+    // Whether the "New workspace" control should exist, answered by the same
+    // check POST /workspaces performs. Deriving it in the browser from the
+    // WORKSPACE role would be wrong: creating one is an ORGANIZATION-level
+    // act, and the two roles can disagree — a workspace OWNER who is only a
+    // MEMBER of the organization would get a button that always fails.
+    const orgRoles = new Map<string, string | null>()
+    for (const organizationId of new Set(access.map((a) => a.organizationId))) {
+      orgRoles.set(
+        organizationId,
+        await this.memberships.organizationRole(principal.userId, organizationId)
+      )
+    }
+
     return access.map((a) => ({
       id: a.workspaceId,
       organizationId: a.organizationId,
@@ -53,6 +72,7 @@ export class WorkspacesController {
       // Sent so the UI can decide what to RENDER. It is never what decides what
       // the user may DO — every mutation re-authorizes server-side.
       permissions: permissionsFor(a.role),
+      canCreateWorkspace: hasOrgPermission(orgRoles.get(a.organizationId), 'workspace.manage'),
     }))
   }
 

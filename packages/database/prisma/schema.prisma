@@ -140,6 +140,7 @@ model User {
 
 
   @@index([email])
+  providerSettings ProviderSetting[]
 }
 
 /// A null workspaceId means the membership is organization-wide.
@@ -1323,4 +1324,43 @@ model Recurrence {
 
   @@index([workspaceId, active, deletedAt])
   @@index([active, expandedUntil])
+}
+
+// ---------------------------------------------------------------------------
+// Installation settings
+// ---------------------------------------------------------------------------
+
+/// An operator-supplied connector credential — a Meta app secret, a Google
+/// client ID — set through the admin UI instead of the environment.
+///
+/// DEPLOYMENT-GLOBAL, and deliberately not tenant-scoped. A Meta app
+/// registration is a property of the installation: the adapters that consult it
+/// run in OAuth callbacks and background jobs that have no workspace in hand,
+/// and giving each workspace its own Meta app would mean every customer
+/// registering with Meta themselves, which is the thing this software exists to
+/// avoid. The consequence is stated on screen rather than hidden — on a
+/// deployment hosting more than one organization, changing these is refused
+/// unless the operator opts in explicitly, because one org's admin must not
+/// silently repoint another org's connector.
+///
+/// The value is envelope-encrypted with the same KEK as OAuth tokens. It is
+/// never returned by the API — `hint` is what the UI displays.
+model ProviderSetting {
+  /// The environment-variable name this overrides, e.g. META_APP_SECRET.
+  /// Restricted to a declared allowlist at the API, so this cannot become a
+  /// way to set arbitrary process configuration.
+  key         String   @id
+  /// AES-256-GCM envelope ciphertext: { v, keyId, iv, tag, ciphertext }.
+  value       String
+  /// Which KEK wrapped this record's DEK, so rotation can find what to re-wrap.
+  keyId       String
+  /// What the UI shows in place of the value: the whole thing for an ID, the
+  /// last four characters for a secret. Enough to answer "is the right value in
+  /// here?" without the answer being readable by anyone who reaches the API.
+  hint        String
+  updatedById String?  @db.Uuid
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 }

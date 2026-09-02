@@ -8,6 +8,7 @@ import { cookiePolicy, loadEnv } from '@smm/config'
 import { assertRlsApplies, db } from '@smm/database'
 import fastifyCookie from '@fastify/cookie'
 import { AppModule } from './app.module.js'
+import { ConnectorSettingsService } from './admin/connector-settings.service.js'
 import { REQUEST_ID_HEADER, resolveRequestId } from './common/request-id.js'
 
 const PORT = Number(process.env['API_PORT'] ?? 3001)
@@ -96,6 +97,13 @@ async function bootstrap(): Promise<void> {
   // it. Behaviour is the only honest check, so this runs before serving.
   await assertRlsApplies(db())
   logger.log('row-level security: enforced for this connection')
+
+  // Connector credentials an administrator set through the UI, loaded into the
+  // adapters before the first request. Without this the first caller after a
+  // restart sees every provider as unconfigured until something triggers a
+  // lazy refresh — which reads as the settings having been lost.
+  const connectorSettings = app.get(ConnectorSettingsService)
+  await connectorSettings.load()
 
   const cookies = cookiePolicy(env)
   if (cookies.warning) logger.warn(cookies.warning)

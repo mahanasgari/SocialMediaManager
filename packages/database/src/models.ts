@@ -34,6 +34,12 @@ const EXEMPT: Record<string, string> = {
   // sign in, so there is no scope to derive. Guarded by app.current_user and
   // the narrow app.token_redeem actor instead.
   VerificationToken: 'user-scoped, not tenant-scoped; must work before authentication',
+  // Deployment-global by design. A Meta app registration belongs to the
+  // installation, not to a workspace — the adapters that read it run in OAuth
+  // callbacks and background jobs with no tenant in hand. Guarded by the two
+  // narrow actors app.connector_settings (read) and
+  // app.connector_settings_write instead.
+  ProviderSetting: 'installation-wide connector credentials; no tenant to scope to',
 }
 
 export type TenantScopeKind = 'workspace' | 'organization'

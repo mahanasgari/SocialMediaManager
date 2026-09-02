@@ -21,6 +21,7 @@ import {
   type VariantDraft,
 } from '../capabilities/index.js'
 import { capabilities, limits, media, text } from './capabilities.js'
+import { providerSetting } from '../settings.js'
 
 const API = 'https://api.telegram.org'
 
@@ -324,7 +325,7 @@ export class TelegramProvider implements AnyProvider {
    *     retrieved 2026-08-30
    */
   verifyWebhook(_raw: Buffer, headers: Record<string, string | undefined>): WebhookVerification {
-    const expected = process.env['TELEGRAM_WEBHOOK_SECRET']
+    const expected = providerSetting('TELEGRAM_WEBHOOK_SECRET')
     if (!expected) {
       return { valid: false, reason: 'no Telegram webhook secret is configured' }
     }
