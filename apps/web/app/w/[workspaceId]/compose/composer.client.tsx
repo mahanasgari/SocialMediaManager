@@ -21,6 +21,14 @@ type Validation = {
   issues: Issue[]
 }
 
+type PostOptionField = {
+  name: string
+  label: string
+  hint?: string
+  placeholder?: string
+  required?: boolean
+}
+
 /**
  * The composer.
  *
@@ -33,16 +41,23 @@ export function Composer({
   workspaceId,
   accounts,
   media,
+  optionFields,
 }: {
   workspaceId: string
   accounts: SocialAccount[]
   media: MediaRow[]
+  /** Per-post fields each provider needs, keyed by provider id. */
+  optionFields: Record<string, PostOptionField[]>
 }) {
   const router = useRouter()
   const [content, setContent] = useState('')
   const [selected, setSelected] = useState<string[]>(accounts[0] ? [accounts[0].id] : [])
   const [scheduledAt, setScheduledAt] = useState('')
   const [attached, setAttached] = useState<string[]>([])
+  // Per-account provider settings, keyed accountId -> field -> value. Keyed by
+  // ACCOUNT rather than provider because a workspace can hold two Telegram
+  // bots posting to different channels.
+  const [options, setOptions] = useState<Record<string, Record<string, string>>>({})
   const [validation, setValidation] = useState<Validation[]>([])
   const [busy, setBusy] = useState<null | 'draft' | 'schedule' | 'now'>(null)
   const [error, setError] = useState<string | null>(null)
@@ -71,7 +86,24 @@ export function Composer({
     [validation]
   )
 
-  const canSubmit = content.trim().length > 0 && selected.length > 0 && !blocking && busy === null
+  // A required provider setting that is empty blocks submission HERE rather
+  // than failing in the worker. Telegram refuses to publish without a chat, and
+  // discovering that at 09:00 from a FAILED variant is the worst place to find
+  // out — the composer already knows.
+  const missingOption = selected.some((id) => {
+    const account = accounts.find((a) => a.id === id)
+    if (!account) return false
+    return (optionFields[account.provider] ?? []).some(
+      (field) => field.required === true && (options[id]?.[field.name] ?? '').trim().length === 0
+    )
+  })
+
+  const canSubmit =
+    content.trim().length > 0 &&
+    selected.length > 0 &&
+    !blocking &&
+    !missingOption &&
+    busy === null
 
   /** The tightest limit across selected channels — the one that binds. */
   const tightest = useMemo(() => {
@@ -91,6 +123,7 @@ export function Composer({
         workspaceId,
         content,
         accountIds: selected,
+        platformOptions: options,
         mediaIds: attached,
         ...(mode === 'schedule' && scheduledAt
           ? { scheduledAt: new Date(scheduledAt).toISOString() }
@@ -328,6 +361,46 @@ export function Composer({
                       {i.message}
                     </p>
                   ))}
+
+                  {/* Per-post provider settings, shown only for the account
+                      they belong to and only when it is actually selected.
+                      Telegram is the case that forced this: a bot is a sender,
+                      not an audience, so the channel is chosen when writing
+                      rather than when connecting. */}
+                  {isSelected &&
+                    (optionFields[a.provider] ?? []).map((field) => {
+                      const value = options[a.id]?.[field.name] ?? ''
+                      const missing = field.required === true && value.trim().length === 0
+                      return (
+                        <div key={field.name} className="mt-2 pl-7">
+                          <label
+                            htmlFor={`${a.id}-${field.name}`}
+                            className="text-xs font-medium"
+                          >
+                            {field.label}
+                            {field.required && <span className="text-destructive"> *</span>}
+                          </label>
+                          <Input
+                            id={`${a.id}-${field.name}`}
+                            value={value}
+                            placeholder={field.placeholder ?? ''}
+                            autoComplete="off"
+                            spellCheck={false}
+                            className="mt-1 h-8 text-sm"
+                            aria-invalid={missing}
+                            onChange={(event) =>
+                              setOptions((prev) => ({
+                                ...prev,
+                                [a.id]: { ...prev[a.id], [field.name]: event.target.value },
+                              }))
+                            }
+                          />
+                          {field.hint && (
+                            <p className="mt-1 text-xs text-muted-foreground">{field.hint}</p>
+                          )}
+                        </div>
+                      )
+                    })}
                 </div>
               )
             })}

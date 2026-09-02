@@ -260,7 +260,13 @@ export class Publisher {
             platformMeta: account.platformMeta as Record<string, unknown>,
           },
           account.credential,
-          { surface: variant.surface as never, text: content, media: attachments, idempotencyKey: key }
+          {
+            surface: variant.surface as never,
+            text: content,
+            media: attachments,
+            idempotencyKey: key,
+            platformOptions: variant.platformOptions as Record<string, unknown>,
+          }
         )
 
         // The lease may have expired during a slow call. Writing anyway would
@@ -566,6 +572,13 @@ export class Publisher {
           // recoverable at all.
           fingerprint: true,
           contentOverride: true,
+          // Per-variant provider settings — a Telegram chat, a Pinterest
+          // board, a YouTube privacy level. The column existed and defaulted
+          // to {}, but nothing ever read it, so every adapter that needs one
+          // received undefined. Telegram needs a chat id and refuses to
+          // publish without it, which made that connector unusable while
+          // reporting itself configured.
+          platformOptions: true,
           socialAccountId: true,
           // Needed by the media preparer: a rendition row carries both tenancy
           // columns, like every other tenant-scoped model.

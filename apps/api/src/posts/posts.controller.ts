@@ -19,6 +19,21 @@ const createSchema = z.object({
   timezone: z.string().min(1).max(64).default('UTC'),
   /** Attached in order. Validated against the workspace's own library. */
   mediaIds: z.array(z.string().uuid()).max(10).default([]),
+  /**
+   * Per-account provider settings, keyed by account id.
+   *
+   * Keyed by ACCOUNT rather than by provider because a workspace can hold
+   * two Telegram bots posting to different channels, and a single
+   * provider-keyed object could not express that.
+   *
+   * Values are passed to the adapter as-is and validated there against what
+   * the provider actually accepts — Telegram needs a chat id, Pinterest a
+   * board, YouTube a privacy level. Capped in size because this is operator
+   * input that lands in a JSON column.
+   */
+  platformOptions: z
+    .record(z.string().uuid(), z.record(z.string().max(64), z.unknown()))
+    .default({}),
 })
 
 const validateSchema = z.object({
@@ -27,7 +42,11 @@ const validateSchema = z.object({
   accountIds: z.array(z.string().uuid()),
 })
 
-function parse<T>(schema: z.ZodType<T>, body: unknown): T {
+// Generic over the SCHEMA, not over its type parameter. `z.ZodType<T>` pins
+// input and output to the same T, so a field with .default() is still typed as
+// optional after parsing even though zod has guaranteed a value. z.output<S>
+// reads the type zod actually produces.
+function parse<S extends z.ZodTypeAny>(schema: S, body: unknown): z.output<S> {
   const result = schema.safeParse(body)
   if (result.success) return result.data
   const issue = result.error.issues[0]
@@ -268,6 +287,7 @@ export class PostsController {
             socialAccountId: account.id,
             surface: 'feed',
             status: input.scheduledAt ? 'SCHEDULED' : 'DRAFT',
+            platformOptions: input.platformOptions[account.id] ?? {},
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any,
         })

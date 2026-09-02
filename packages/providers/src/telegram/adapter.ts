@@ -67,6 +67,24 @@ export class TelegramProvider implements AnyProvider {
 
   readonly authStyle = 'credentials' as const
 
+  /**
+   * The chat, chosen per post.
+   *
+   * A bot is not an audience — it is a sender that can post to many channels
+   * and groups. So the chat cannot be settled at connect time the way a
+   * Facebook Page can, and publish() refuses without it.
+   */
+  readonly postOptionFields = [
+    {
+      name: 'chatId',
+      label: 'Channel or chat',
+      placeholder: '@mychannel or -1001234567890',
+      required: true,
+      hint:
+        'Add your bot to the channel as an administrator first. Use @name for a public channel, or the numeric id for a private one or a group.',
+    },
+  ]
+
   readonly connectFields = [
     {
       name: 'botToken',

@@ -94,6 +94,14 @@ export type ProviderDescriptor = {
     hint?: string
     placeholder?: string
   }>
+  /** Values the composer collects per post. Empty when none are needed. */
+  postOptionFields: ReadonlyArray<{
+    name: string
+    label: string
+    hint?: string
+    placeholder?: string
+    required?: boolean
+  }>
 }
 
 export function describe(provider: AnyProvider): ProviderDescriptor {
@@ -119,6 +127,7 @@ export function describe(provider: AnyProvider): ProviderDescriptor {
     notice: (provider as { notice?: string }).notice ?? null,
     authStyle: provider.authStyle ?? 'oauth',
     connectFields: provider.connectFields ?? [],
+    postOptionFields: provider.postOptionFields ?? [],
   }
 }
 

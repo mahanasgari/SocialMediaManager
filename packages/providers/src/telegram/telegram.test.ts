@@ -271,3 +271,37 @@ describe('capability honesty', () => {
     expect(metrics['reach']).toBeNull()
   })
 })
+
+describe('the chat a post goes to', () => {
+  // Telegram is the reason postOptionFields exists.
+  //
+  // A bot is a SENDER, not an audience: one bot posts to many channels, so the
+  // chat cannot be settled when the account is connected the way a Facebook
+  // Page can. publish() refuses without it — and for a long time nothing in the
+  // product could supply one, because the composer had no field, the API had no
+  // parameter, and the pipeline dropped the column on the floor. The connector
+  // reported itself configured and could not publish anything at all.
+  //
+  // These two tests are the contract that keeps that from coming back: the
+  // adapter demands a value, and it declares the field the composer needs in
+  // order to collect it.
+  const telegram = new TelegramProvider()
+
+  it('declares the field the composer must collect', () => {
+    const chat = telegram.postOptionFields?.find((field) => field.name === 'chatId')
+    expect(chat).toBeDefined()
+    // Required, so the composer blocks submission rather than letting the post
+    // reach the worker and fail hours later.
+    expect(chat?.required).toBe(true)
+  })
+
+  it('refuses to publish without one, and says what is missing', async () => {
+    await expect(
+      telegram.publish(
+        { id: 'a', providerAccountId: '1', handle: '@bot', displayName: 'Bot', platformMeta: {} },
+        { accessToken: 'token', scopes: ['bot'] },
+        { surface: 'feed', text: 'hello', media: [], idempotencyKey: 'k' }
+      )
+    ).rejects.toThrow(/chat/i)
+  })
+})

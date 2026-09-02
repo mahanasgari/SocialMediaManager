@@ -128,6 +128,25 @@ export type CredentialField = {
   placeholder?: string
 }
 
+/**
+ * A value the composer collects PER POST, stored on the variant as
+ * platformOptions.
+ *
+ * Distinct from CredentialField, which is collected once at connect time.
+ * These vary per post: one Telegram bot serves many chats, and which chat a
+ * post goes to is decided when writing it, not when connecting the bot.
+ */
+export type PostOptionField = {
+  /** Key inside the variant’s platformOptions object. */
+  name: string
+  label: string
+  /** Shown under the field. Say where the value comes FROM, not what it is. */
+  hint?: string
+  placeholder?: string
+  /** A post cannot be scheduled for this account without it. */
+  required?: boolean
+}
+
 /** Base surface every adapter implements. */
 export interface BaseProvider {
   readonly id: ProviderId
@@ -152,6 +171,16 @@ export interface BaseProvider {
    * supplied.
    */
   readonly connectFields?: readonly CredentialField[]
+
+  /**
+   * Values the composer collects per post for this provider.
+   *
+   * OPTIONAL rather than exhaustive, deliberately. Most providers need
+   * nothing here, and making twenty-three adapters declare an empty array
+   * would be ceremony rather than safety — unlike the capability matrix,
+   * where a silently-defaulted false hides a feature that genuinely exists.
+   */
+  readonly postOptionFields?: readonly PostOptionField[]
 
   getAuthUrl(ctx: AuthContext): Promise<AuthRedirect>
   handleCallback(ctx: AuthContext, params: Record<string, string>): Promise<DiscoveredAccount[]>
