@@ -99,6 +99,20 @@ const KEYS = [
     help: 'Also verifies inbound webhook signatures, so comments and messages need it too.',
   },
   {
+    key: 'INSTAGRAM_APP_ID',
+    provider: 'instagramLogin',
+    label: 'Instagram app ID',
+    secret: false,
+    help: 'NOT the Meta app ID. Find it under Products > Instagram > API setup with Instagram login — connecting an Instagram account directly uses its own app credentials.',
+  },
+  {
+    key: 'INSTAGRAM_APP_SECRET',
+    provider: 'instagramLogin',
+    label: 'Instagram app secret',
+    secret: true,
+    help: 'From the same panel as the Instagram app ID. Publishing, comments and insights each need Meta App Review before anyone outside your test users can connect.',
+  },
+  {
     key: 'PINTEREST_APP_ID',
     provider: 'pinterest',
     label: 'Pinterest app ID',

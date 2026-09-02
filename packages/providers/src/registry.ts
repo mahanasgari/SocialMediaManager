@@ -5,6 +5,7 @@ import { BlueskyProvider } from './bluesky/adapter.js'
 import { TelegramProvider } from './telegram/adapter.js'
 import { MastodonProvider } from './mastodon/adapter.js'
 import { FacebookProvider } from './facebook/adapter.js'
+import { InstagramLoginProvider } from './instagramLogin/adapter.js'
 import { InstagramProvider } from './instagram/adapter.js'
 import { ThreadsProvider } from './threads/adapter.js'
 import { XProvider } from './x/adapter.js'
@@ -163,6 +164,7 @@ register(new MastodonProvider())
 // that, say, TikTok needs an audit before anything they publish is visible.
 register(new FacebookProvider())
 register(new InstagramProvider())
+register(new InstagramLoginProvider())
 register(new ThreadsProvider())
 register(new XProvider())
 register(new LinkedInProvider())

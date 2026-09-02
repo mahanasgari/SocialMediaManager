@@ -9,6 +9,7 @@ import {
   settingsAge,
 } from './settings.js'
 import { LinkedInProvider } from './linkedin/adapter.js'
+import * as registry from './registry.js'
 import { metaApp } from './meta/graph.js'
 
 /**
@@ -115,12 +116,12 @@ describe('connector settings', () => {
     expect(new Set(keys).size).toBe(keys.length)
 
     // A key naming a provider that does not exist would render a settings card
-    // for a connector nobody can connect.
-    const providers = new Set(PROVIDER_SETTING_KEYS.map((entry) => entry.provider))
-    for (const provider of providers) {
-      expect(['facebook', 'instagram', 'pinterest', 'youtube', 'tiktok', 'linkedin', 'telegram']).toContain(
-        provider
-      )
+    // for a connector nobody can connect. Checked against the REGISTRY rather
+    // than a list written here: a literal list is a second place to remember,
+    // and it went stale the first time a connector was added.
+    const known = new Set(registry.all().map((provider) => provider.id))
+    for (const entry of PROVIDER_SETTING_KEYS) {
+      expect(known, `${entry.key} names provider "${entry.provider}"`).toContain(entry.provider)
     }
   })
 

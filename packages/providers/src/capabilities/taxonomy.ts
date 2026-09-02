@@ -94,6 +94,7 @@ export type Surface = (typeof SURFACES)[number]
 export type ProviderId =
   | 'facebook'
   | 'instagram'
+  | 'instagramLogin'
   | 'threads'
   | 'x'
   | 'linkedin'
