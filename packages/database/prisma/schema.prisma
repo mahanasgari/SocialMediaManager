@@ -108,6 +108,7 @@ model Workspace {
 
   @@unique([organizationId, slug])
   @@index([organizationId, deletedAt])
+  postingSlots PostingSlot[]
 }
 
 model User {
@@ -1363,4 +1364,38 @@ model ProviderSetting {
   updatedAt   DateTime @updatedAt
 
   updatedBy User? @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+/// A recurring time-of-week this workspace publishes at.
+///
+/// The "queue" model: instead of picking a datetime for every post, a workspace
+/// declares when it posts — Tuesdays at 09:00, weekdays at 17:30 — and new posts
+/// drop into the next free one. For anyone posting on a rhythm this is the
+/// difference between choosing a time forty times a week and choosing it once.
+///
+/// A WALL-CLOCK TIME plus the workspace's zone, never an instant, for exactly
+/// the reason recurrence stores one: "09:00 on Tuesdays" must survive a
+/// daylight-saving change, and an instant plus an interval does not.
+///
+/// Deliberately NOT per-account. A slot is when this workspace has its audience's
+/// attention, which is a property of the audience rather than of a connector, and
+/// per-account slots multiply the thing being simplified. A post going to four
+/// channels occupies one slot.
+model PostingSlot {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String   @db.Uuid
+  organizationId String   @db.Uuid
+  /// 0 is Sunday, matching Date.getDay() so no conversion is needed anywhere.
+  dayOfWeek      Int
+  hour           Int
+  minute         Int
+  createdAt      DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// One slot per moment. Two slots at the same time would hand out the same
+  /// instant to two posts and publish them together, which is the opposite of
+  /// what a queue is for.
+  @@unique([workspaceId, dayOfWeek, hour, minute])
+  @@index([workspaceId])
 }

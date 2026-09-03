@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   Users,
   Webhook,
+  Clock,
 } from 'lucide-react'
 import type { ComponentType, ReactNode } from 'react'
 import { cn } from '@/lib/cn'
@@ -44,6 +45,7 @@ const GROUPS: Array<{ label: string; items: Item[] }> = [
       { href: 'dashboard', label: 'Overview', icon: LayoutDashboard },
       { href: 'compose', label: 'Compose', icon: PenSquare },
       { href: 'calendar', label: 'Calendar', icon: CalendarDays },
+      { href: 'queue', label: 'Queue', icon: Clock },
       { href: 'schedules', label: 'Repeating', icon: Repeat },
       { href: 'posts', label: 'Posts', icon: FileText },
       { href: 'media', label: 'Media', icon: ImageIcon },

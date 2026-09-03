@@ -13,3 +13,6 @@ export {
   localDate,
 } from './recurrence.js'
 export type { RecurrenceRule, Weekday } from './recurrence.js'
+
+export { nextFreeSlots, describeSlot, SUGGESTED_SLOTS } from './queue.js'
+export type { Slot } from './queue.js'

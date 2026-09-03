@@ -46,6 +46,7 @@ describe('tenant model derivation', () => {
       'PostMedia',
       'PostMetric',
       'PostVariant',
+      'PostingSlot',
       'PublishAttempt',
       'RSSFeed',
       'RSSItem',

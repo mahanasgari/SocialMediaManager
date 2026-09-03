@@ -18,6 +18,7 @@ import { ProvidersController } from './providers/providers.controller.js'
 import { SocialAccountsController } from './providers/social-accounts.controller.js'
 import { ConnectionsService } from './providers/connections.service.js'
 import { PostsController } from './posts/posts.controller.js'
+import { QueueController } from './posts/queue.controller.js'
 import { CalendarController } from './posts/calendar.controller.js'
 import { AnalyticsController } from './analytics/analytics.controller.js'
 import { MediaController } from './media/media.controller.js'
@@ -57,6 +58,7 @@ import { MetricsController } from './health/metrics.controller.js'
     ProvidersController,
     SocialAccountsController,
     PostsController,
+    QueueController,
     CalendarController,
     AnalyticsController,
     MediaController,

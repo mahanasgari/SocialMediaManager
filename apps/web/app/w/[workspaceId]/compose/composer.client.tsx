@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import {
   AlertCircle,
   AlertTriangle,
+  CalendarClock,
   Check,
   CheckCircle2,
   Image as ImageIcon,
@@ -86,12 +87,39 @@ export function Composer({
   const [tab, setTab] = useState<string>(SHARED)
   const [options, setOptions] = useState<Record<string, Record<string, string>>>({})
   const [validation, setValidation] = useState<Validation[]>([])
-  const [busy, setBusy] = useState<null | 'draft' | 'schedule' | 'now'>(null)
+  const [busy, setBusy] = useState<null | 'draft' | 'schedule' | 'now' | 'queue'>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<string | null>(null)
+  /** The next free queue slot, or null when this workspace has no queue. */
+  const [nextSlot, setNextSlot] = useState<string | null>(null)
+  const [queueEmpty, setQueueEmpty] = useState(false)
+  /** The workspace's zone, so queue times read the same here as on the queue page. */
+  const [queueZone, setQueueZone] = useState<string | null>(null)
 
   /** What a given channel will actually publish. */
   const textFor = (accountId: string) => overrides[accountId] ?? content
+
+  // Asked for once: the queue is a workspace setting, not something that
+  // changes while a post is being written. Re-fetching on every keystroke would
+  // be a request per character for an answer that does not move.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const response = await fetch(`/api/v1/posting-slots/next?workspaceId=${workspaceId}&count=1`)
+      if (!response.ok || cancelled) return
+      const body = (await response.json()) as {
+        slots: string[]
+        empty: boolean
+        timezone?: string
+      }
+      setQueueEmpty(body.empty)
+      setNextSlot(body.slots[0] ?? null)
+      setQueueZone(body.timezone ?? null)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [workspaceId])
 
   // A tab for a channel that has just been deselected would edit text nobody
   // will publish, so editing falls back to the shared draft.
@@ -168,7 +196,7 @@ export function Composer({
     else setOverrides((prev) => ({ ...prev, [tab]: value }))
   }
 
-  async function submit(mode: 'draft' | 'schedule' | 'now') {
+  async function submit(mode: 'draft' | 'schedule' | 'now' | 'queue') {
     setBusy(mode)
     setError(null)
     setResult(null)
@@ -186,6 +214,10 @@ export function Composer({
         ...(mode === 'schedule' && scheduledAt
           ? { scheduledAt: new Date(scheduledAt).toISOString() }
           : {}),
+        // The queue supplies the instant, so a queued post is an ordinary
+        // scheduled post from here on — the scanner, retries and the calendar
+        // know nothing about queues, which is why this adds no new state.
+        ...(mode === 'queue' && nextSlot ? { scheduledAt: nextSlot } : {}),
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       }),
     })
@@ -388,6 +420,32 @@ export function Composer({
             >
               Schedule
             </Button>
+            {/* The queue path, and the reason the whole feature exists:
+                publishing on a rhythm should not mean picking a date and time
+                forty times a week. The button says WHEN, because "Add to
+                queue" without a time is asking someone to trust a black box. */}
+            {nextSlot && (
+              <Button
+                variant="outline"
+                disabled={!canSubmit}
+                loading={busy === 'queue'}
+                onClick={() => submit('queue')}
+              >
+                <CalendarClock className="size-3.5" />
+                Queue for{' '}
+                {new Date(nextSlot).toLocaleString(undefined, {
+                  weekday: 'short',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  // The WORKSPACE's zone, not the reader's. Someone who set the
+                  // queue to 09:00 and sees a button offering 12:30 has been
+                  // told two different things about one moment — and the queue
+                  // page states the workspace zone explicitly.
+                  ...(queueZone ? { timeZone: queueZone } : {}),
+                })}
+              </Button>
+            )}
+
             <Button
               variant="outline"
               disabled={!canSubmit}
@@ -406,6 +464,19 @@ export function Composer({
             </Button>
           </CardContent>
         </Card>
+
+        {queueEmpty && (
+          <p className="text-xs text-muted-foreground">
+            No posting queue yet.{' '}
+            <Link
+              href={`/w/${workspaceId}/queue`}
+              className="font-medium text-primary underline underline-offset-2"
+            >
+              Set posting times
+            </Link>{' '}
+            and new posts can take the next free one instead of you picking a date each time.
+          </p>
+        )}
 
         {error && (
           <div
