@@ -32,7 +32,7 @@ const suite = dbUrl ? describe : describe.skip
 if (!dbUrl) console.warn('\n  [skipped] aggregate — run: bash scripts/test-db.sh up\n')
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const omitTenancy = <T,>(data: T) => data as any
+const omitTenancy = <T>(data: T) => data as any
 
 let client: Db
 let orgId: string
@@ -278,5 +278,71 @@ suite('rolling metrics into daily snapshots', () => {
     } finally {
       await app.$disconnect()
     }
+  })
+
+  it('builds history older than the trailing window', async () => {
+    // The catch-up pass. Without it the dashboard would be correct and empty:
+    // it reads snapshots, and a workspace with months of metrics but none built
+    // would show months of nothing.
+    //
+    // Bounded per run — the SQL carries a LIMIT — because building a year in
+    // one pass means hundreds of queries inside a single transaction, and this
+    // codebase's rule is that transactions stay short (ARCHITECTURE §2.3). The
+    // bound is not asserted here: proving it needs thirty-one days of fixture
+    // to demonstrate one comparison, which buys less than it costs.
+    //
+    // What IS asserted is the property that first attempt got wrong. Progress
+    // was measured by the oldest snapshot, and days with no activity write no
+    // row — so a workspace whose recent weeks were quiet produced no mark to
+    // advance from and never built its history at all. Asking which days are
+    // missing cannot get stuck that way.
+    const old = new Date(today.getTime() - 40 * 86_400_000)
+    await withTenant(workspaceId, async (tx) => {
+      const post = await tx.post.create({
+        data: omitTenancy({
+          organizationId: orgId,
+          authorId: userId,
+          baseContent: 'Old',
+          status: 'PUBLISHED',
+        }),
+        select: { id: true },
+      })
+      const variant = await tx.postVariant.create({
+        data: omitTenancy({
+          organizationId: orgId,
+          postId: post.id,
+          socialAccountId: accountId,
+          surface: 'feed',
+          status: 'PUBLISHED',
+          publishedAt: new Date(old.getTime() + 3_600_000),
+        }),
+        select: { id: true },
+      })
+      await tx.postMetric.create({
+        data: omitTenancy({
+          postVariantId: variant.id,
+          capturedAt: new Date(old.getTime() + 3_600_000),
+          impressions: 77,
+        }),
+      })
+    })
+
+    // Nothing at all in the trailing week, which is exactly the case that broke
+    // the first implementation.
+    await run()
+
+    const built = await withAggregator(async (tx) =>
+      tx.analyticsSnapshot.findFirst({
+        where: { workspaceId, day: old, socialAccountId: null },
+      })
+    )
+    expect(built?.impressions).toBe(77)
+
+    // And re-running leaves it alone rather than adding a second copy.
+    await run()
+    const all = await withAggregator(async (tx) =>
+      tx.analyticsSnapshot.findMany({ where: { workspaceId, day: old } })
+    )
+    expect(all).toHaveLength(2) // the workspace row and one account row
   })
 })

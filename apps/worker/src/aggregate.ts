@@ -34,6 +34,25 @@ const jobLog = log.child({ service: 'worker', job: 'aggregate' })
 /** How far back to rewrite on each pass. Covers late-arriving metrics. */
 const WINDOW_DAYS = 7
 
+/**
+ * How much history to catch up on PER RUN, beyond the trailing window.
+ *
+ * A workspace with a year of metrics and no snapshots needs a year built, or
+ * the dashboard is correct and empty. But building a year in one pass means
+ * seven hundred queries inside a single transaction, and this codebase's own
+ * rule is that transactions are short and contain no I/O (ARCHITECTURE §2.3) —
+ * a long one pins a connection and, under load, exhausts the pool.
+ *
+ * So catch-up is incremental: each run extends a little further back, and the
+ * work converges over a few minutes of ordinary ticks instead of one long
+ * stall. Thirty days a run reaches a full year in twelve passes, which at a
+ * thirty-second tick is about six minutes after a deploy.
+ */
+const CATCHUP_DAYS_PER_RUN = 30
+
+/** The furthest back a snapshot is ever built. Matches the longest dashboard window. */
+const MAX_HISTORY_DAYS = 365
+
 type Totals = {
   impressions: number | null
   reach: number | null
@@ -67,7 +86,33 @@ export async function aggregateAnalytics(): Promise<{
     let rows = 0
 
     for (const workspace of workspaces) {
-      for (const day of days) {
+      // The trailing window always, plus a slice of history that has metrics and
+      // no snapshot yet.
+      //
+      // Progress is measured by ASKING WHICH DAYS ARE MISSING rather than by
+      // remembering how far back a previous run reached. The first attempt used
+      // the oldest snapshot as a high-water mark and could not move: days with
+      // no activity write no row, so a workspace whose recent weeks are quiet
+      // never produced a mark to advance from, and history older than the
+      // window was never built at all. Asking the data cannot get stuck.
+      const pending = await tx.$queryRaw<Array<{ day: Date }>>`
+        SELECT DISTINCT date_trunc('day', m."capturedAt") AS day
+        FROM "PostMetric" m
+        WHERE m."workspaceId" = ${workspace.id}::uuid
+          AND m."capturedAt" >= ${new Date(today.getTime() - MAX_HISTORY_DAYS * 86_400_000)}
+          AND NOT EXISTS (
+            SELECT 1 FROM "AnalyticsSnapshot" s
+            WHERE s."workspaceId" = m."workspaceId"
+              AND s."day" = date_trunc('day', m."capturedAt")
+              AND s."socialAccountId" IS NULL
+          )
+        ORDER BY day DESC
+        LIMIT ${CATCHUP_DAYS_PER_RUN}
+      `
+
+      const forWorkspace = [...days, ...pending.map((row) => new Date(row.day))]
+
+      for (const day of forWorkspace) {
         const next = new Date(day.getTime() + 86_400_000)
 
         // The LATEST reading per variant within the day. A variant polled six
