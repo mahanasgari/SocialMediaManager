@@ -84,8 +84,7 @@ export class InstagramLoginProvider implements AnyProvider {
    * [V] instagram_business_basic, _content_publish, _manage_comments
    *     https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login
    *     retrieved 2026-09-02
-   * [V] instagram_business_manage_insights, required for both media and
-   *     account insights
+   * [V] instagram_business_manage_insights, for media and account insights
    *     https://developers.facebook.com/docs/instagram-platform/insights/
    *     retrieved 2026-09-02
    */

@@ -91,8 +91,7 @@ export function igAuthorizeUrl(options: {
  * fixture — carries it through, and the exchange then fails with an invalid
  * code error that names nothing useful. Stripping it costs one line.
  *
- * [V] "The #_ appended to the end of the redirect URI is not part of the code
- *     itself, so strip it out."
+ * [V] The #_ appended to the redirect is not part of the code; strip it
  *     https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login/business-login
  *     retrieved 2026-09-02
  */
@@ -190,8 +189,7 @@ export async function igExchangeForLongLivedToken(
  * recovered at all — the person has to reconnect. The refresher must therefore
  * run well before day sixty rather than on the day.
  *
- * [V] GET /refresh_access_token, grant_type=ig_refresh_token, "at least 24
- *     hours old but has not expired"
+ * [V] GET /refresh_access_token, grant_type=ig_refresh_token, 24h-old minimum
  *     https://developers.facebook.com/docs/instagram-platform/reference/refresh_access_token/
  *     retrieved 2026-09-02
  */

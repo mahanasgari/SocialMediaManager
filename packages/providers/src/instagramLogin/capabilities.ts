@@ -76,8 +76,7 @@ export const capabilities = {
 
 export const limits = {
   /**
-   * [V] "100 API-published posts within a 24-hour moving period", carousels
-   *     counting as one.
+   * [V] 100 API-published posts per 24-hour moving window, carousels as one
    *     https://developers.facebook.com/docs/instagram-platform/content-publishing
    *     retrieved 2026-09-02
    *

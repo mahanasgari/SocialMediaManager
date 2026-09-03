@@ -6,7 +6,7 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1333 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
+**1382 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
 all clean.**
 
 ---
@@ -74,6 +74,78 @@ Three bugs were found by looking at the running app rather than the code:
   always undefined for `/w/:id/posts`; the section is at index 3.
 - **`asChild` buttons threw at runtime.** Radix's Slot requires exactly one
   child and counts the `false` that `{loading && …}` evaluates to.
+
+### Writing one post for several networks
+
+The composer used to send identical text everywhere. `contentOverride` had been
+on `PostVariant` since Phase 4 and the publish pipeline had always read it —
+nothing could ever write it, so the column sat at null for every variant ever
+created. 280 characters on X and 2,200 on Instagram are not the same piece of
+writing, and Instagram strips links that LinkedIn keeps, so the only options
+were the lowest common denominator or posting one network at a time.
+
+There is now a tab per selected channel, a dot marking the ones whose text has
+diverged, and a control to fall back to the shared draft. An override equal to
+the shared text is dropped rather than stored: keeping it would pin that variant
+to today's wording, so a later edit of the post would silently stop reaching one
+channel.
+
+**A bug found on the way, worth more than the feature.** Both the validate
+endpoint and the variant writer hard-coded `surface: 'feed'` — and eleven of
+twenty-six connectors have no feed at all. Instagram publishes to `feedImage`,
+`reel` or `story`; YouTube to `feedVideo` or `short`; Pinterest to `pin`;
+Medium, WordPress, Blogger and WeChat to `article`. The profile lookup returned
+`undefined` for every one of them, so they showed no character limit and were
+validated against nothing. A 5,000-character Instagram caption passed the
+composer and would have been refused at publish time. Worse on the write path: a
+variant stored with a surface its provider does not have stays unvalidatable for
+life. The registry now derives `defaultSurface` from the order of the media
+profiles — Instagram leads with `feedImage`, YouTube with `feedVideo` — and five
+tests assert every provider's default resolves to a real profile with a real
+character limit.
+
+**The preview shows what each channel receives**, and deliberately does not
+imitate any network's interface. Copying their chrome would be a legal problem
+and a worse tool; what matters is the part a mock-up hides. Text beyond the
+limit is struck through *in place*, so someone forty characters over can see
+which sentence to lose rather than reading "404/500" and guessing.
+
+### The posting queue
+
+Phase 4 specified queue slots and they were never built, so the only way to
+schedule was to pick a date and time for every single post — something anyone
+publishing on a rhythm does forty times a week.
+
+A workspace now declares **when** it posts and a new post takes the next free
+slot. The composer's button is labelled with the actual time it will use, in the
+workspace's timezone, because "Add to queue" without a time asks someone to
+trust a black box.
+
+Wall-clock times plus an IANA zone, never instants, for the same reason
+recurrence stores them that way — and it reuses the recurrence conversion rather
+than repeating it, so there is one piece of DST arithmetic in this codebase.
+Adding `7 * 86400000` to an instant works until a transition and then puts every
+post an hour out, permanently, with nothing reporting a problem.
+
+Taken slots are skipped, and the taken set is read from the posts themselves
+rather than tracked separately — so a post dragged to a new time on the calendar
+frees its slot without anything having to notice. Slots are deliberately not
+per-account: a slot is when this workspace has its audience's attention, which
+is a property of the audience rather than of a connector.
+
+A queued post is an **ordinary scheduled post** from the moment it has its
+instant. The scanner, retries, reconciliation and the calendar learn nothing
+new, which is why this is a table and a controller rather than a state machine.
+
+### The calendar, in four readings
+
+Month, week, day and list — the plan specified all four and only month existed,
+which made the calendar useless in the two situations people actually open one:
+a sparse workspace, where a month grid is thirty empty squares and four posts
+you have to hunt for, and a busy week, where a month cell truncates to two
+lines. Each view answers a different question, the anchor date travels in the
+URL so switching views keeps your place, and entries within a day are now sorted
+chronologically rather than by insertion.
 
 ### Administering the installation from the browser
 
