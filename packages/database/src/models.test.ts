@@ -22,6 +22,7 @@ describe('tenant model derivation', () => {
     const names = TENANT_MODELS.map((m) => m.name).sort()
     expect(names).toEqual([
       'AccountMetric',
+      'AnalyticsSnapshot',
       'ApiKey',
       'Approval',
       'ApprovalStep',

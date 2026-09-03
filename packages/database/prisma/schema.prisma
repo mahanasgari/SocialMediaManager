@@ -109,6 +109,7 @@ model Workspace {
   @@unique([organizationId, slug])
   @@index([organizationId, deletedAt])
   postingSlots PostingSlot[]
+  analyticsSnapshots AnalyticsSnapshot[]
 }
 
 model User {
@@ -1398,4 +1399,55 @@ model PostingSlot {
   /// what a queue is for.
   @@unique([workspaceId, dayOfWeek, hour, minute])
   @@index([workspaceId])
+}
+
+/// A day of metrics, already aggregated.
+///
+/// The plan is explicit that dashboards read snapshots and never raw rows, and
+/// until now they read raw rows: the analytics endpoint ran a DISTINCT ON over
+/// every PostMetric captured in the window, on every page load. That is fine at
+/// demo scale and gets worse every hour the ingestion job runs, because the
+/// table it scans only ever grows.
+///
+/// One row per workspace per day per account. `socialAccountId` null means the
+/// whole workspace — the totals a dashboard actually opens with, precomputed
+/// rather than summed across accounts at read time.
+///
+/// Deliberately NOT a cache. It is derived from PostMetric and can be rebuilt
+/// from it, but it is the read model: retention nulls raw payloads after 90 days
+/// and rolls hourly metrics to daily after 30, so a year-old chart can only come
+/// from here. Rebuilding is idempotent — the unique index makes a re-run of any
+/// day replace it rather than double it.
+model AnalyticsSnapshot {
+  id              String    @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId     String    @db.Uuid
+  organizationId  String    @db.Uuid
+  /// Midnight UTC of the day being summarised. A day is a UTC day here, not a
+  /// workspace-local one: two workspaces in different zones sharing an account
+  /// would otherwise disagree about which day a metric belongs to.
+  day             DateTime
+  /// Null for the workspace total across every account.
+  socialAccountId String?   @db.Uuid
+  postsPublished  Int       @default(0)
+  impressions     Int?
+  reach           Int?
+  likes           Int?
+  comments        Int?
+  shares          Int?
+  saves           Int?
+  clicks          Int?
+  videoViews      Int?
+  followers       Int?
+  /// Averaged across the variants measured that day, not summed — a rate that
+  /// adds up is not a rate.
+  engagementRate  Float?
+  /// How many variants contributed, so a day built from two posts is not read
+  /// as confidently as one built from two hundred.
+  sampleSize      Int       @default(0)
+  computedAt      DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, day, socialAccountId])
+  @@index([workspaceId, day])
 }

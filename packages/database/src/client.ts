@@ -316,6 +316,30 @@ export function withConnectorSettingsWrite<T>(
 }
 
 /**
+ * The analytics rollup.
+ *
+ * "Which metrics arrived yesterday, across every workspace?" is the same shape
+ * as the publish, retention and reconcile sweeps: a cross-cutting query that
+ * legitimately runs BEFORE any tenant is known. Under tenant-keyed RLS it
+ * matches nothing and nothing errors — the job reports success having
+ * aggregated zero rows, forever, while every chart stays empty.
+ *
+ * A separate actor rather than a widening of withScheduler(), and narrow on
+ * purpose: it reads the numbers it aggregates and the rows needed to attribute
+ * them, and nothing else. Not post content, not credentials, not messages. An
+ * aggregation job able to read message bodies would be a reporting feature with
+ * a data-exfiltration path attached.
+ */
+export function withAggregator<T>(fn: (tx: Db) => Promise<T>, client: Db = db()): Promise<T> {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.aggregator', 'on', true)`
+    return scopeStorage.run({ kind: 'system', reason: 'analytics rollup across workspaces' }, () =>
+      runInTransactionContext({ active: true }, async () => fn(tx as Db))
+    )
+  })
+}
+
+/**
  * A public link-in-bio page.
  *
  * /l/:slug is served to anyone, with no session and no tenant context — the

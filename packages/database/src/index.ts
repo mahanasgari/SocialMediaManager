@@ -1,4 +1,4 @@
-export { db, createTestClient, disconnect, withTenant, withOrganization, withUser, withScheduler, withReconciler, withInboundRouter, withTokenRedemption, withRetention, withApiKeyAuth, withPublicPage, withConnectorSettings, withConnectorSettingsWrite, withSystemScope } from './client.js'
+export { db, createTestClient, disconnect, withTenant, withOrganization, withUser, withScheduler, withReconciler, withInboundRouter, withTokenRedemption, withRetention, withApiKeyAuth, withPublicPage, withConnectorSettings, withConnectorSettingsWrite, withAggregator, withSystemScope } from './client.js'
 export type { Db } from './client.js'
 
 export { scopeStorage, currentScope, MissingTenantScope, TenantScopeMismatch } from './scope.js'

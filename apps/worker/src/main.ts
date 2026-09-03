@@ -12,6 +12,7 @@ import { Scanner, ClockWentBackwards } from './scanner.js'
 import { publishVariant, activePublisher, closePublisher } from './publisher.js'
 import { recoverInterrupted } from './recovery.js'
 import { ingestMetrics } from './metrics.js'
+import { aggregateAnalytics } from './aggregate.js'
 import { dispatchWebhooks } from './webhooks.js'
 import { dispatchOutbox } from './outbox.js'
 import { loadConnectorSettings } from '@smm/publishing'
@@ -270,6 +271,16 @@ async function tick(): Promise<void> {
     }
   } catch (err) {
     workerLog.error('metrics ingestion failed', { err })
+  }
+
+  // Rolling the raw readings into daily snapshots, immediately after collecting
+  // them. Dashboards read snapshots; nothing scans PostMetric on a page load
+  // any more. It rewrites a trailing week rather than only yesterday, because
+  // provider numbers keep moving for days after the fact.
+  try {
+    await aggregateAnalytics()
+  } catch (err) {
+    workerLog.error('analytics aggregation failed', { err })
   }
 
   // Retention, hourly. Last because it is the least urgent thing in the tick
