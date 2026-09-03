@@ -1,5 +1,6 @@
 import { apiGet } from '@/lib/server-fetch'
 import { Card, EmptyState, ErrorCard, Muted, PageHeader } from '@/components/ui'
+import { Comparison, Trend, type SeriesData } from './trend.client'
 
 type Overview = {
   windowDays: number
@@ -29,15 +30,29 @@ type AccountRow = {
 
 const METRICS = ['impressions', 'reach', 'likes', 'comments', 'shares', 'clicks'] as const
 
+const WINDOWS = [7, 30, 90] as const
+
 export default async function AnalyticsPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ workspaceId: string }>
+  searchParams: Promise<{ days?: string }>
 }) {
   const { workspaceId } = await params
-  const [overview, accounts] = await Promise.all([
-    apiGet<Overview>(`/api/v1/analytics/overview?workspaceId=${workspaceId}&days=30`),
-    apiGet<AccountRow[]>(`/api/v1/analytics/accounts?workspaceId=${workspaceId}&days=30`),
+  const { days: rawDays } = await searchParams
+
+  // A selector, because the comparison is only meaningful when the window has a
+  // period before it with data in it. Fixed at thirty days, a young workspace
+  // could never see a comparison at all and would reasonably conclude the
+  // feature was broken.
+  const days = WINDOWS.includes(Number(rawDays) as (typeof WINDOWS)[number]) ? Number(rawDays) : 30
+  const [overview, accounts, series] = await Promise.all([
+    apiGet<Overview>(`/api/v1/analytics/overview?workspaceId=${workspaceId}&days=${days}`),
+    apiGet<AccountRow[]>(`/api/v1/analytics/accounts?workspaceId=${workspaceId}&days=${days}`),
+    // Reads the daily snapshots rather than raw metrics: a month of trend is
+    // thirty indexed rows instead of a scan over every reading ever captured.
+    apiGet<SeriesData>(`/api/v1/analytics/series?workspaceId=${workspaceId}&days=${days}`),
   ])
 
   if (!overview.ok) return <ErrorCard message={overview.message} requestId={overview.requestId} />
@@ -46,6 +61,23 @@ export default async function AnalyticsPage({
     <>
       <PageHeader title="Analytics" description={`Last ${overview.data.windowDays} days.`} />
 
+      <div className="mb-4 flex gap-1 rounded-md border border-border p-0.5 w-fit">
+        {WINDOWS.map((option) => (
+          <a
+            key={option}
+            href={`/w/${workspaceId}/analytics?days=${option}`}
+            className="rounded px-2.5 py-1 text-xs transition-colors"
+            style={
+              option === days
+                ? { background: 'hsl(var(--primary) / 0.1)', color: 'hsl(var(--primary))' }
+                : { color: 'hsl(var(--muted-foreground))' }
+            }
+          >
+            {option} days
+          </a>
+        ))}
+      </div>
+
       {overview.data.publishedCount === 0 ? (
         <EmptyState
           title="Nothing published yet"
@@ -53,6 +85,24 @@ export default async function AnalyticsPage({
         />
       ) : (
         <>
+          {series.ok && (
+            <div className="mb-6 space-y-4">
+              {/* Comparison first: "is this month better than last?" is the
+                  question people arrive with, and the trend explains it. */}
+              <Comparison data={series.data} />
+              <Card className="p-4">
+                <p className="text-sm font-medium">Impressions per day</p>
+                <p className="mb-2 text-xs">
+                  <Muted>
+                    A day with no column was never measured, which is not the same as a day that
+                    reached nobody — hover to tell them apart.
+                  </Muted>
+                </p>
+                <Trend data={series.data} />
+              </Card>
+            </div>
+          )}
+
           <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {METRICS.map((key) => (
               <Card key={key} className="p-3">
