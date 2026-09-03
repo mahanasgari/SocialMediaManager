@@ -34,12 +34,28 @@ const createSchema = z.object({
   platformOptions: z
     .record(z.string().uuid(), z.record(z.string().max(64), z.unknown()))
     .default({}),
+  /**
+   * Per-account rewrites of the post body, keyed by account id.
+   *
+   * The same column the pipeline has always read — `contentOverride` — which
+   * until now nothing could write. One text that fits X and reads well on
+   * LinkedIn is rare, and the alternative is publishing the lowest common
+   * denominator everywhere.
+   *
+   * An entry equal to the base content is dropped rather than stored: a
+   * variant whose override merely repeats the post is indistinguishable from
+   * one with no override, and keeping it means later edits to the base
+   * silently stop reaching that channel.
+   */
+  contentOverrides: z.record(z.string().uuid(), z.string().max(20_000)).default({}),
 })
 
 const validateSchema = z.object({
   workspaceId: z.string().uuid(),
   content: z.string().max(20_000),
   accountIds: z.array(z.string().uuid()),
+  /** Per-account rewrites, so each channel is checked against its own text. */
+  contentOverrides: z.record(z.string().uuid(), z.string().max(20_000)).default({}),
 })
 
 // Generic over the SCHEMA, not over its type parameter. `z.ZodType<T>` pins
@@ -54,6 +70,22 @@ function parse<S extends z.ZodTypeAny>(schema: S, body: unknown): z.output<S> {
     issue ? `${issue.path.join('.') || 'body'}: ${issue.message}` : 'The request body is invalid.',
     issue?.path.join('.')
   )
+}
+
+/**
+ * The override for one account, or undefined when there is effectively none.
+ *
+ * Blank and identical-to-base both mean "no override". Storing either would
+ * pin the variant to today's text, so a later edit of the post body would
+ * stop reaching that one channel for a reason nobody could see.
+ */
+function overrideFor(
+  input: { content: string; contentOverrides: Record<string, string> },
+  accountId: string
+): string | undefined {
+  const value = input.contentOverrides[accountId]?.trim()
+  if (!value) return undefined
+  return value === input.content.trim() ? undefined : value
 }
 
 @ApiTags('posts')
@@ -232,12 +264,27 @@ export class PostsController {
         if (!provider) {
           return { accountId: account.id, handle: account.handle, issues: [], limit: null }
         }
-        const issues = provider.validate({ surface: 'feed', text: input.content, media: [] })
+        // The provider's OWN surface, not 'feed'. Eleven connectors have no
+        // feed — Instagram, YouTube, TikTok, Pinterest among them — and the
+        // lookup returned undefined for every one of them, so they were
+        // validated against nothing and shown no character limit at all.
+        const surface = registry.defaultSurfaceOf(provider)
+        // Each channel is validated against the text it will ACTUALLY publish,
+        // which is its override when one exists.
+        const content = input.contentOverrides[account.id]?.trim() || input.content
+        const issues = provider.validate({ surface: surface as never, text: content, media: [] })
         return {
           accountId: account.id,
           handle: account.handle,
           provider: provider.label,
-          limit: provider.text['feed']?.maxLength ?? null,
+          surface,
+          limit: provider.text[surface]?.maxLength ?? null,
+          // What the network does to links and how many media it takes, so
+          // the preview can say 'this link will be stripped' while the post
+          // is still being written rather than after it publishes.
+          linkHandling: provider.text[surface]?.linkHandling ?? null,
+          maxMedia: provider.media[surface]?.maxCount ?? null,
+          length: content.length,
           issues,
         }
       })
@@ -255,7 +302,8 @@ export class PostsController {
     return withTenant(input.workspaceId, async (tx) => {
       const accounts = await tx.socialAccount.findMany({
         where: { id: { in: input.accountIds }, status: 'ACTIVE' },
-        select: { id: true },
+        // provider is needed to pick the variant's surface — see below.
+        select: { id: true, provider: true },
       })
       if (accounts.length === 0) {
         throw errors.unprocessable(
@@ -280,14 +328,20 @@ export class PostsController {
       })
 
       for (const account of accounts) {
+        // Same correction on the WRITE path. A variant stored with surface
+        // 'feed' for a connector that has no feed is validated against an
+        // undefined profile for the rest of its life.
+        const provider = registry.get(account.provider as never)
+        const surface = provider ? registry.defaultSurfaceOf(provider) : 'feed'
         await tx.postVariant.create({
            
           data: {
             postId: post.id,
             socialAccountId: account.id,
-            surface: 'feed',
+            surface,
             status: input.scheduledAt ? 'SCHEDULED' : 'DRAFT',
             platformOptions: input.platformOptions[account.id] ?? {},
+            ...(overrideFor(input, account.id) ? { contentOverride: overrideFor(input, account.id) } : {}),
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
           } as any,
         })

@@ -1,5 +1,5 @@
 import type { AnyProvider } from './base.js'
-import type { ProviderId } from './capabilities/index.js'
+import type { ProviderId, Surface } from './capabilities/index.js'
 import { MockProvider } from './mock/mock.provider.js'
 import { BlueskyProvider } from './bluesky/adapter.js'
 import { TelegramProvider } from './telegram/adapter.js'
@@ -95,6 +95,17 @@ export type ProviderDescriptor = {
     hint?: string
     placeholder?: string
   }>
+  /**
+   * The surface a post targets unless something says otherwise.
+   *
+   * NOT always 'feed'. Eleven connectors have no feed at all — Instagram
+   * publishes to feedImage, reel or story; YouTube to feedVideo or short;
+   * Pinterest to pin; Medium and WordPress to article. Code that assumed
+   * 'feed' silently skipped text and media validation for every one of them,
+   * and showed no character limit, because the profile lookup returned
+   * undefined and nothing errored.
+   */
+  defaultSurface: Surface
   /** Values the composer collects per post. Empty when none are needed. */
   postOptionFields: ReadonlyArray<{
     name: string
@@ -104,6 +115,18 @@ export type ProviderDescriptor = {
     required?: boolean
     options?: readonly { value: string; label: string }[]
   }>
+}
+
+/**
+ * A provider's primary surface: the first it declares.
+ *
+ * Derived rather than declared, so adding a connector cannot forget it. Order
+ * in the media profile is the author's statement of what the connector is
+ * mainly for — Instagram lists feedImage before reel, YouTube feedVideo before
+ * short — and that is exactly the default a composer wants.
+ */
+export function defaultSurfaceOf(provider: AnyProvider): Surface {
+  return (Object.keys(provider.media)[0] ?? 'feed') as Surface
 }
 
 export function describe(provider: AnyProvider): ProviderDescriptor {
@@ -125,6 +148,7 @@ export function describe(provider: AnyProvider): ProviderDescriptor {
     configured,
     capabilities: { ...provider.capabilities },
     surfaces: Object.keys(provider.media),
+    defaultSurface: defaultSurfaceOf(provider),
     disabledReason,
     notice: (provider as { notice?: string }).notice ?? null,
     authStyle: provider.authStyle ?? 'oauth',
