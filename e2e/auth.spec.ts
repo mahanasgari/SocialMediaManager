@@ -8,6 +8,10 @@ import { DEMO, expectPage, signIn } from './helpers'
  * `/dashboard`, which is not a route — every successful sign-in landed on a
  * 404. 1034 unit tests missed it, because the redirect only runs in a browser.
  */
+// Signed OUT, unlike the rest of the suite. The sign-in form is what these
+// tests exercise, so starting from a saved session would test nothing.
+test.use({ storageState: { cookies: [], origins: [] } })
+
 test.describe('signing in', () => {
   test('lands on a real workspace, not a 404', async ({ page }) => {
     await signIn(page)

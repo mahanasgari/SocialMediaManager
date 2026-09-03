@@ -17,6 +17,20 @@ export const DEMO = { email: 'owner@demo.local', password: 'demo1234' }
  * after a successful POST, which an API-only login would never have executed.
  */
 export async function signIn(page: Page, credentials = DEMO): Promise<void> {
+  // Already signed in? Land on the workspace and stop.
+  //
+  // The suite reuses one session (see auth.setup.ts), so calling this per test
+  // would submit the form thirty-four times from one address and trip the
+  // product's IP limiter — which is working correctly and should not be
+  // loosened to accommodate a test suite. Kept as a call rather than deleted
+  // from every spec because a test that opts out of the saved state, as
+  // auth.spec.ts does, still needs the real form.
+  await page.goto('/')
+  if (/\/w\/[0-9a-f-]+\//.test(page.url())) {
+    await page.waitForURL(/\/w\/[0-9a-f-]+\//, { timeout: 30_000 })
+    return
+  }
+
   await page.goto('/login')
   await page.getByLabel('Email').fill(credentials.email)
   await page.getByLabel('Password').fill(credentials.password)

@@ -41,5 +41,21 @@ export default defineConfig({
     video: 'off',
   },
 
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    // One sign-in for the whole run, saved and reused.
+    //
+    // Every test used to sign in for itself — thirty-four submissions from one
+    // address in a few minutes — which trips the product's own IP limiter (40
+    // per 15 minutes, refunding one per success so a valid account cannot reset
+    // the budget). The suite failed against its own brute-force protection and
+    // the timeouts looked like product bugs. Raising the limit for tests would
+    // have weakened a real control to keep doing thirty-three sign-ins that
+    // prove nothing after the first.
+    { name: 'setup', testMatch: /auth\.setup\.ts/ },
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'], storageState: '.auth/session.json' },
+      dependencies: ['setup'],
+    },
+  ],
 })
