@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, Paperclip } from 'lucide-react'
 import type { MediaRow, SocialAccount } from '@/lib/api'
@@ -100,11 +101,7 @@ export function Composer({
   })
 
   const canSubmit =
-    content.trim().length > 0 &&
-    selected.length > 0 &&
-    !blocking &&
-    !missingOption &&
-    busy === null
+    content.trim().length > 0 && selected.length > 0 && !blocking && !missingOption && busy === null
 
   /** The tightest limit across selected channels — the one that binds. */
   const tightest = useMemo(() => {
@@ -134,7 +131,9 @@ export function Composer({
     })
 
     if (!create.ok) {
-      const body = (await create.json().catch(() => null)) as { error?: { message?: string } } | null
+      const body = (await create.json().catch(() => null)) as {
+        error?: { message?: string }
+      } | null
       setError(body?.error?.message ?? 'Could not save the post.')
       setBusy(null)
       return
@@ -181,7 +180,9 @@ export function Composer({
                 <span
                   className={cn(
                     'tabular text-xs',
-                    content.length > tightest ? 'font-medium text-destructive' : 'text-muted-foreground'
+                    content.length > tightest
+                      ? 'font-medium text-destructive'
+                      : 'text-muted-foreground'
                   )}
                 >
                   {content.length} / {tightest}
@@ -197,41 +198,61 @@ export function Composer({
               className="mt-1.5 resize-y"
             />
 
-            {media.length > 0 && (
-              <div className="mt-4">
-                <p className="flex items-center gap-1.5 text-xs font-medium">
-                  <Paperclip className="size-3.5" />
-                  Attach media
+            <div className="mt-4">
+              <p className="flex items-center gap-1.5 text-xs font-medium">
+                <Paperclip className="size-3.5" />
+                Attach media
+              </p>
+
+              {/* Shown even when the library is EMPTY, and that is the point.
+                  Instagram and YouTube both refuse a post with no media, so a
+                  composer that hides the whole section when there is nothing to
+                  attach leaves someone reading "must include at least one
+                  image" with nothing on screen to act on. The library is one
+                  click away; saying so costs a line. */}
+              {media.length === 0 ? (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  Nothing in this workspace&apos;s library yet.{' '}
+                  <Link
+                    href={`/w/${workspaceId}/media`}
+                    className="font-medium text-primary underline underline-offset-2"
+                  >
+                    Upload an image or video
+                  </Link>{' '}
+                  — Instagram and YouTube require one.
                 </p>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {media.slice(0, 12).map((m) => {
-                    const on = attached.includes(m.id)
-                    return (
-                      <button
-                        key={m.id}
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() =>
-                          setAttached((prev) =>
-                            on ? prev.filter((id) => id !== m.id) : [...prev, m.id]
-                          )
-                        }
-                        className={cn(
-                          'inline-flex max-w-[11rem] items-center gap-1 truncate rounded-md border px-2 py-1 text-xs',
-                          'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                          on
-                            ? 'border-primary/40 bg-primary/10 text-primary'
-                            : 'border-input text-muted-foreground hover:bg-accent'
-                        )}
-                      >
-                        {on && <Check className="size-3 shrink-0" />}
-                        <span className="truncate">{m.filename}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
+              ) : (
+                <>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {media.slice(0, 12).map((m) => {
+                      const on = attached.includes(m.id)
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() =>
+                            setAttached((prev) =>
+                              on ? prev.filter((id) => id !== m.id) : [...prev, m.id]
+                            )
+                          }
+                          className={cn(
+                            'inline-flex max-w-[11rem] items-center gap-1 truncate rounded-md border px-2 py-1 text-xs',
+                            'transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                            on
+                              ? 'border-primary/40 bg-primary/10 text-primary'
+                              : 'border-input text-muted-foreground hover:bg-accent'
+                          )}
+                        >
+                          {on && <Check className="size-3 shrink-0" />}
+                          <span className="truncate">{m.filename}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
           </CardContent>
         </Card>
 
@@ -374,10 +395,7 @@ export function Composer({
                       const missing = field.required === true && value.trim().length === 0
                       return (
                         <div key={field.name} className="mt-2 pl-7">
-                          <label
-                            htmlFor={`${a.id}-${field.name}`}
-                            className="text-xs font-medium"
-                          >
+                          <label htmlFor={`${a.id}-${field.name}`} className="text-xs font-medium">
                             {field.label}
                             {field.required && <span className="text-destructive"> *</span>}
                           </label>
