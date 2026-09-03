@@ -13,7 +13,10 @@ test.describe('composing and publishing', () => {
     const workspace = workspaceIdFrom(page)
     await page.goto(`/w/${workspace}/compose`)
 
-    const content = page.getByLabel('Content')
+    // The editor's label names what is being edited: the shared draft, or
+    // one channel's rewrite of it. A pattern rather than a fixed string
+    // because both are the same control.
+    const content = page.getByLabel(/Shared text|Text for/)
     await content.fill('x'.repeat(600))
 
     // The mock provider's limit is 500. The error must name the platform and
@@ -30,7 +33,7 @@ test.describe('composing and publishing', () => {
     const workspace = workspaceIdFrom(page)
     await page.goto(`/w/${workspace}/compose`)
 
-    const content = page.getByLabel('Content')
+    const content = page.getByLabel(/Shared text|Text for/)
     await content.fill('x'.repeat(600))
     await expect(page.getByRole('button', { name: 'Publish now' })).toBeDisabled()
 
@@ -44,7 +47,7 @@ test.describe('composing and publishing', () => {
     await page.goto(`/w/${workspace}/compose`)
 
     const marker = `E2E publish ${Date.now()}`
-    await page.getByLabel('Content').fill(marker)
+    await page.getByLabel(/Shared text|Text for/).fill(marker)
 
     await expect(page.getByRole('button', { name: 'Publish now' })).toBeEnabled({ timeout: 15_000 })
     await page.getByRole('button', { name: 'Publish now' }).click()
@@ -66,7 +69,7 @@ test.describe('composing and publishing', () => {
     await page.goto(`/w/${workspace}/compose`)
 
     const marker = `E2E draft ${Date.now()}`
-    await page.getByLabel('Content').fill(marker)
+    await page.getByLabel(/Shared text|Text for/).fill(marker)
     await expect(page.getByRole('button', { name: 'Save draft' })).toBeEnabled({ timeout: 15_000 })
     await page.getByRole('button', { name: 'Save draft' }).click()
 
