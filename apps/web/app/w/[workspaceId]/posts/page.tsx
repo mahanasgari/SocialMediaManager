@@ -41,9 +41,21 @@ const VARIANT: Record<string, 'default' | 'success' | 'warning' | 'destructive' 
   DRAFT: 'default',
 }
 
-export default async function PostsPage({ params }: { params: Promise<{ workspaceId: string }> }) {
+type PostsResponse = { items: PostRow[]; nextCursor: string | null }
+
+export default async function PostsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ workspaceId: string }>
+  searchParams: Promise<{ cursor?: string }>
+}) {
   const { workspaceId } = await params
-  const posts = await apiGet<PostRow[]>(`/api/v1/posts?workspaceId=${workspaceId}`)
+  const { cursor } = await searchParams
+
+  const posts = await apiGet<PostsResponse>(
+    `/api/v1/posts?workspaceId=${workspaceId}${cursor ? `&cursor=${cursor}` : ''}`
+  )
 
   if (!posts.ok) return <ErrorCard message={posts.message} requestId={posts.requestId} />
 
@@ -59,7 +71,7 @@ export default async function PostsPage({ params }: { params: Promise<{ workspac
         }
       />
 
-      {posts.data.length === 0 ? (
+      {posts.data.items.length === 0 ? (
         <EmptyState
           icon={<FileText className="size-5" />}
           title="Nothing here yet"
@@ -72,7 +84,7 @@ export default async function PostsPage({ params }: { params: Promise<{ workspac
         />
       ) : (
         <div className="space-y-3">
-          {posts.data.map((post) => (
+          {posts.data.items.map((post) => (
             <Card key={post.id} className="transition-colors hover:border-primary/30">
               <CardContent className="p-4">
                 <div className="flex items-start justify-between gap-4">
@@ -80,9 +92,7 @@ export default async function PostsPage({ params }: { params: Promise<{ workspac
                     {post.baseContent.slice(0, 280)}
                     {post.baseContent.length > 280 && '…'}
                   </p>
-                  <Badge variant={VARIANT[post.status] ?? 'default'}>
-                    {humanise(post.status)}
-                  </Badge>
+                  <Badge variant={VARIANT[post.status] ?? 'default'}>{humanise(post.status)}</Badge>
                 </div>
 
                 {/* The TIME, not the status again.
@@ -127,10 +137,7 @@ export default async function PostsPage({ params }: { params: Promise<{ workspac
                   {post.variants
                     .filter((v) => v.lastError)
                     .map((v) => (
-                      <p
-                        key={`${v.id}-err`}
-                        className="flex gap-1.5 pt-1 text-xs text-destructive"
-                      >
+                      <p key={`${v.id}-err`} className="flex gap-1.5 pt-1 text-xs text-destructive">
                         <AlertCircle className="mt-0.5 size-3 shrink-0" />
                         <span>
                           <span className="font-medium">{v.socialAccount.handle}</span>{' '}
@@ -142,6 +149,32 @@ export default async function PostsPage({ params }: { params: Promise<{ workspac
               </CardContent>
             </Card>
           ))}
+
+          {/* The reason cursor pagination went in.
+              The list was capped at a hundred with no way past it — a workspace
+              with five hundred posts could see a hundred, and nothing on screen
+              said the other four hundred existed. A cap with no door is a
+              silent truncation. */}
+          {posts.data.nextCursor && (
+            <div className="flex justify-center pt-2">
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/w/${workspaceId}/posts?cursor=${posts.data.nextCursor}`}>
+                  Older posts
+                </Link>
+              </Button>
+            </div>
+          )}
+
+          {cursor && (
+            <div className="flex justify-center">
+              <Link
+                href={`/w/${workspaceId}/posts`}
+                className="text-xs text-muted-foreground underline underline-offset-2"
+              >
+                Back to newest
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </>

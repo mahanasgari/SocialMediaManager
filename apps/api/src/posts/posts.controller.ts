@@ -100,12 +100,16 @@ export class PostsController {
   @ApiOperation({ summary: 'Posts in a workspace' })
   async list(
     @Query('workspaceId') workspaceId: string,
+    @Query('cursor') cursor: string | undefined,
+    @Query('limit') limit: string | undefined,
     @Caller() principal: Principal | undefined
   ) {
     if (!workspaceId) throw errors.validation('workspaceId is required.', 'workspaceId')
     await resolveRead(principal, workspaceId, 'posts:read', (u, w) =>
       this.memberships.requireAccess(u, w)
     )
+
+    const take = Math.min(Math.max(Number(limit) || 50, 1), 100)
 
     return withTenant(workspaceId, async (tx) => {
       const posts = await tx.post.findMany({
@@ -126,11 +130,24 @@ export class PostsController {
             },
           },
         },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
+        // Ordered by ID, not createdAt.
+        //
+        // These are uuidv7, so id order IS creation order — and unlike a
+        // timestamp it is unique, which is what a cursor needs. Two posts
+        // created in the same millisecond under a createdAt cursor either
+        // repeat on the next page or vanish between pages, depending on which
+        // side of the comparison they land.
+        orderBy: { id: 'desc' },
+        // One more than asked for. Its existence is how the caller learns there
+        // IS a next page, without a second count query over a growing table.
+        take: take + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       })
 
-      return posts.map((p) => {
+      const hasMore = posts.length > take
+      const page = hasMore ? posts.slice(0, take) : posts
+
+      const items = page.map((p) => {
         const published = p.variants.filter((v) => v.status === 'PUBLISHED').length
         return {
           ...p,
@@ -139,6 +156,14 @@ export class PostsController {
           summary: describeStatus(p.status, { published, total: p.variants.length }),
         }
       })
+
+      return {
+        items,
+        // The id to ask for next, or null at the end. An opaque token to the
+        // caller — it happens to be an id, and nothing outside here should
+        // depend on that.
+        nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
+      }
     })
   }
 

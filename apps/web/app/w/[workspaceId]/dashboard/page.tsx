@@ -29,7 +29,7 @@ export default async function Dashboard({ params }: { params: Promise<{ workspac
     getAccounts(workspaceId),
     getMembers(workspaceId),
     getHealth(),
-    apiGet<PostRow[]>(`/api/v1/posts?workspaceId=${workspaceId}`),
+    apiGet<{ items: PostRow[] }>(`/api/v1/posts?workspaceId=${workspaceId}`),
   ])
 
   if (!workspace.ok)
@@ -39,7 +39,7 @@ export default async function Dashboard({ params }: { params: Promise<{ workspac
     ? accounts.data.filter((a) => a.status === 'NEEDS_REAUTH' || a.status === 'DISCONNECTED')
     : []
 
-  const all = posts.ok ? posts.data : []
+  const all = posts.ok ? posts.data.items : []
   const now = Date.now()
 
   const upcoming = all
