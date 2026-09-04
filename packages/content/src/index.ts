@@ -16,3 +16,6 @@ export type { RecurrenceRule, Weekday } from './recurrence.js'
 
 export { nextFreeSlots, describeSlot, SUGGESTED_SLOTS } from './queue.js'
 export type { Slot } from './queue.js'
+
+export { parseCsv, mapColumns, parseWhen, parseAccounts } from './csv.js'
+export type { CsvRow, ColumnMap } from './csv.js'

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { AlertCircle, ExternalLink, FileText } from 'lucide-react'
 import { apiGet } from '@/lib/server-fetch'
+import { ImportPosts } from './import.client'
 import { EmptyState, ErrorCard, PageHeader } from '@/components/ui'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -53,9 +54,14 @@ export default async function PostsPage({
   const { workspaceId } = await params
   const { cursor } = await searchParams
 
-  const posts = await apiGet<PostsResponse>(
-    `/api/v1/posts?workspaceId=${workspaceId}${cursor ? `&cursor=${cursor}` : ''}`
-  )
+  const [posts, accounts] = await Promise.all([
+    apiGet<PostsResponse>(
+      `/api/v1/posts?workspaceId=${workspaceId}${cursor ? `&cursor=${cursor}` : ''}`
+    ),
+    apiGet<Array<{ id: string; handle: string; displayName: string; status: string }>>(
+      `/api/v1/social-accounts?workspaceId=${workspaceId}`
+    ),
+  ])
 
   if (!posts.ok) return <ErrorCard message={posts.message} requestId={posts.requestId} />
 
@@ -65,9 +71,15 @@ export default async function PostsPage({
         title="Posts"
         description="Everything drafted, scheduled and published."
         action={
-          <Button asChild size="sm">
-            <Link href={`/w/${workspaceId}/compose`}>Compose</Link>
-          </Button>
+          <div className="flex gap-2">
+            <ImportPosts
+              workspaceId={workspaceId}
+              accounts={accounts.ok ? accounts.data.filter((a) => a.status === 'ACTIVE') : []}
+            />
+            <Button asChild size="sm">
+              <Link href={`/w/${workspaceId}/compose`}>Compose</Link>
+            </Button>
+          </div>
         }
       />
 
