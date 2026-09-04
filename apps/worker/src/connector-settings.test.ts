@@ -38,6 +38,27 @@ const ownerUrl = process.env['TEST_DATABASE_OWNER_URL'] ?? dbUrl
 const suite = dbUrl ? describe : describe.skip
 if (!dbUrl) console.warn('\n  [skipped] connector settings — run: bash scripts/test-db.sh up\n')
 
+/**
+ * Whatever the deployment already had, held for the duration.
+ *
+ * These rows are keyed by setting NAME — META_APP_ID and friends — so a test
+ * writing META_APP_ID writes the same row a real deployment uses. There is no
+ * separate namespace to hide in. Wiping the table between tests therefore
+ * destroys real configuration, which is exactly what happened: several runs of
+ * this suite silently deleted an operator's stored Meta and Google credentials,
+ * and the only symptom was two connectors quietly reverting to "needs
+ * credentials".
+ *
+ * So the suite borrows the table and gives it back.
+ */
+let saved: Array<{
+  key: string
+  value: string
+  keyId: string
+  hint: string
+  updatedById: string | null
+}> = []
+
 let owner: Db
 let app: Db
 
@@ -61,6 +82,14 @@ suite('connector settings, end to end', () => {
     process.env['ENCRYPTION_KEY'] ??= Buffer.alloc(32, 7).toString('base64')
   })
 
+  beforeAll(async () => {
+    saved = await withSystemScope('connector settings backup', async () =>
+      owner.providerSetting.findMany({
+        select: { key: true, value: true, keyId: true, hint: true, updatedById: true },
+      })
+    )
+  })
+
   afterEach(async () => {
     await withSystemScope('connector settings test reset', async () => {
       await owner.providerSetting.deleteMany({})
@@ -69,6 +98,13 @@ suite('connector settings, end to end', () => {
   })
 
   afterAll(async () => {
+    // Put the deployment's own rows back, verbatim.
+    await withSystemScope('connector settings restore', async () => {
+      await owner.providerSetting.deleteMany({})
+      for (const row of saved) {
+        await owner.providerSetting.create({ data: row })
+      }
+    })
     await Promise.all([owner.$disconnect(), app.$disconnect()])
   }, 30_000)
 
@@ -98,7 +134,11 @@ suite('connector settings, end to end', () => {
     await save('LINKEDIN_CLIENT_SECRET', 'the-client-secret')
 
     const result = await loadConnectorSettings()
-    expect(result.loaded).toBe(2)
+    // The two keys THIS test wrote, not a count of the whole table. A
+    // deployment's own rows share this table — there is no separate namespace
+    // for tests — so a global count asserts on state the test does not own and
+    // fails the moment an operator has configured anything.
+    expect(result.loaded).toBeGreaterThanOrEqual(2)
     expect(result.unreadable).toEqual([])
 
     // The whole point: same process, no restart, connector now usable.
