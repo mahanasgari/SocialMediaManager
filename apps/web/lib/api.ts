@@ -92,7 +92,9 @@ export const getProviders = () => apiGet<ProviderDescriptor[]>('/api/v1/social-p
 export const getAccounts = (workspaceId: string) =>
   apiGet<SocialAccount[]>(`/api/v1/social-accounts?workspaceId=${workspaceId}`)
 export const getMedia = (workspaceId: string) =>
-  apiGet<MediaRow[]>(`/api/v1/media?workspaceId=${workspaceId}`)
+  apiGet<{ items: MediaRow[]; nextCursor: string | null }>(
+    `/api/v1/media?workspaceId=${workspaceId}`
+  )
 export const getMembers = (workspaceId: string) =>
   apiGet<Member[]>(`/api/v1/workspaces/${workspaceId}/members`)
 export const getInvites = (workspaceId: string) =>

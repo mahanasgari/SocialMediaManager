@@ -37,7 +37,9 @@ export default async function InboxPage({
 
   const [workspace, conversations] = await Promise.all([
     getWorkspace(workspaceId),
-    apiGet<ConversationRow[]>(`/api/v1/inbox/conversations?${query.toString()}`),
+    apiGet<{ items: ConversationRow[]; nextCursor: string | null }>(
+      `/api/v1/inbox/conversations?${query.toString()}`
+    ),
   ])
 
   if (!workspace.ok)
@@ -101,7 +103,7 @@ export default async function InboxPage({
         ))}
       </div>
 
-      {conversations.data.length === 0 ? (
+      {conversations.data.items.length === 0 ? (
         <EmptyState
           title={status === 'OPEN' ? 'Nothing waiting' : `No ${status.toLowerCase()} conversations`}
           hint={
@@ -113,7 +115,7 @@ export default async function InboxPage({
         />
       ) : (
         <div className="space-y-1.5">
-          {conversations.data.map((c) => {
+          {conversations.data.items.map((c) => {
             const latest = c.messages[0]
             return (
               <Link key={c.id} href={`${base}/${c.id}`} className="block">

@@ -58,7 +58,7 @@ export default async function ComposePage({
         <Composer
           workspaceId={workspaceId}
           accounts={publishable}
-          media={media.ok ? media.data : []}
+          media={media.ok ? media.data.items : []}
           optionFields={
             providers.ok
               ? Object.fromEntries(

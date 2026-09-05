@@ -69,7 +69,32 @@ export class AnalyticsController {
         ORDER BY m."postVariantId", m."capturedAt" DESC
       `
 
-      const totals = sumNullable(latest as unknown as Array<Record<string, number | null>>)
+      // Totals come from the SNAPSHOTS, which is what the read model is for: a
+      // year-long window is a few hundred indexed rows rather than a scan over
+      // every reading ever captured. The raw query above stays, because top
+      // posts needs per-variant granularity a daily rollup does not have — and
+      // it is bounded by the same window.
+      const snapshots = await tx.analyticsSnapshot.findMany({
+        where: { socialAccountId: null, day: { gte: startOfUtcDay(since) } },
+        select: {
+          postsPublished: true,
+          impressions: true,
+          reach: true,
+          likes: true,
+          comments: true,
+          shares: true,
+          clicks: true,
+        },
+      })
+
+      // Falls back to the raw readings when no snapshot covers the window. The
+      // rollup runs on the worker's tick and catches up over several passes, so
+      // a freshly deployed installation has metrics before it has snapshots —
+      // and an empty chart on a workspace with data would look like data loss.
+      const totals =
+        snapshots.length > 0
+          ? sumNullable(snapshots as unknown as Array<Record<string, number | null>>)
+          : sumNullable(latest as unknown as Array<Record<string, number | null>>)
 
       const publishedCount = await tx.postVariant.count({
         where: { status: 'PUBLISHED', publishedAt: { gte: since } },

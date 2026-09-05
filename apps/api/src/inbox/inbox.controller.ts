@@ -47,6 +47,8 @@ export class InboxController {
   @Get('conversations')
   @ApiOperation({ summary: 'Conversations in a workspace' })
   async list(
+    @Query('cursor') cursor: string | undefined,
+    @Query('limit') limit: string | undefined,
     @Query('workspaceId') workspaceId: string,
     @Query('status') status: string,
     @Query('kind') kind: string,
@@ -58,8 +60,10 @@ export class InboxController {
       this.memberships.requireAccess(u, w)
     )
 
-    return withTenant(workspaceId, async (tx) =>
-      tx.conversation.findMany({
+    const take = Math.min(Math.max(Number(limit) || 50, 1), 100)
+
+    return withTenant(workspaceId, async (tx) => {
+      const rows = await tx.conversation.findMany({
         where: {
           // OPEN by default. An inbox that opens showing archived threads is an
           // inbox nobody trusts.
@@ -87,10 +91,22 @@ export class InboxController {
             select: { body: true, direction: true, authorHandle: true },
           },
         },
-        orderBy: { lastMessageAt: 'desc' },
-        take: 100,
+        // Activity order, with id as a TIEBREAKER. lastMessageAt is not unique
+        // — a burst of replies can share a timestamp — and a cursor over a
+        // non-unique sort either repeats rows at a page boundary or skips them.
+        // The id settles ties deterministically.
+        orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
+        take: take + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       })
-    )
+
+      const hasMore = rows.length > take
+      const items = hasMore ? rows.slice(0, take) : rows
+      return {
+        items,
+        nextCursor: hasMore ? (items[items.length - 1]?.id ?? null) : null,
+      }
+    })
   }
 
   @Get('conversations/:id')

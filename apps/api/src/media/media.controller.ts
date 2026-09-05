@@ -27,6 +27,8 @@ export class MediaController {
   @Get()
   @ApiOperation({ summary: 'Media in a workspace' })
   async list(
+    @Query('cursor') cursor: string | undefined,
+    @Query('limit') limit: string | undefined,
     @Query('workspaceId') workspaceId: string,
     @CurrentUser() principal: SessionPrincipal | undefined
   ) {
@@ -34,8 +36,10 @@ export class MediaController {
     if (!workspaceId) throw errors.validation('workspaceId is required.', 'workspaceId')
     await this.memberships.requireAccess(principal.userId, workspaceId)
 
-    return withTenant(workspaceId, async (tx) =>
-      tx.mediaAsset.findMany({
+    const take = Math.min(Math.max(Number(limit) || 100, 1), 200)
+
+    return withTenant(workspaceId, async (tx) => {
+      const rows = await tx.mediaAsset.findMany({
         select: {
           id: true,
           filename: true,
@@ -46,10 +50,21 @@ export class MediaController {
           altText: true,
           createdAt: true,
         },
-        orderBy: { createdAt: 'desc' },
-        take: 200,
+        // By id, which for uuidv7 IS creation order and is unique — unlike
+        // createdAt, where two uploads in the same millisecond make a cursor
+        // repeat or skip.
+        orderBy: { id: 'desc' },
+        take: take + 1,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       })
-    )
+
+      const hasMore = rows.length > take
+      const items = hasMore ? rows.slice(0, take) : rows
+      return {
+        items,
+        nextCursor: hasMore ? (items[items.length - 1]?.id ?? null) : null,
+      }
+    })
   }
 
   /**
