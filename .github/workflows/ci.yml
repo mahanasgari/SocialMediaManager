@@ -81,6 +81,12 @@ jobs:
       - name: "Gate G2 — every provider call has a declared rate budget"
         run: pnpm --filter @smm/providers gate:budgets
 
+      # The rule that makes `git pull && docker compose up -d` safe. `migrate`
+      # finishes before the API and worker restart, so there is always a window
+      # where the new schema is live and the old code is still running.
+      - name: "Gate G4 — every migration is additive"
+        run: node scripts/gate-migrations.mjs
+
   # The suite that crosses process boundaries.
   #
   # A separate job from `verify` because it needs the whole stack running —

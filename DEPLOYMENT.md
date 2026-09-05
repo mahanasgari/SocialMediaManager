@@ -101,6 +101,18 @@ never coming.
 
 ---
 
+
+**To see what the emails look like without a provider**, start the bundled
+catcher:
+
+```bash
+docker compose --profile mailpit up -d
+# then set SMTP_URL=smtp://mailpit:1025 and read the mail at http://localhost:8025
+```
+
+It accepts everything and delivers nothing — a way to check that a reset link
+works and reads properly, not a mail server. It never starts unless the profile
+is named, so a production `docker compose up -d` cannot pick it up by accident.
 ## What runs
 
 | Service | Purpose | Published |
@@ -140,6 +152,46 @@ that has run cannot be un-run:
 ```bash
 docker compose exec postgres pg_dump -U "$POSTGRES_USER" smm | gzip > backup.sql.gz
 ```
+
+### The schema compatibility rule
+
+This is the promise that makes the three commands above safe, and it is a
+constraint on the project rather than advice to you.
+
+**A migration may only add.** New tables, new nullable columns, new indexes, new
+enum values. It may not drop a column or table, rename one, or add `NOT NULL` to
+a column that already exists.
+
+The reason is that `migrate` finishes before the API and worker restart, and on
+any real deployment there is a window — seconds on one host, minutes on several
+— where **the new schema is live and the old code is still running**. Every
+destructive change breaks that window. A dropped column makes the old code's
+`SELECT` fail; a rename is a drop and an add wearing a disguise; `NOT NULL` on an
+existing column makes the old code's `INSERT` fail. None of these show up in
+testing, because tests run one version at a time.
+
+As of this writing the history is **30 migrations with no destructive operation
+in any of them**. That was discipline rather than luck, but it was undocumented
+discipline, which is the kind that lasts until the first person in a hurry.
+
+**Removing something takes two releases.** To drop a column:
+
+1. **Release N** stops reading and writing it. The column stays.
+2. **Release N+1**, once every deployment is on N or later, drops it.
+
+Renaming is the same shape: add the new column, write both, backfill, stop
+reading the old, and drop it a release later.
+
+### What this means for you
+
+- **Do not skip releases** when the notes say a release is a contract step. N+1
+  assumes N has run everywhere; going straight from N-1 to N+1 skips the
+  release that stopped using the column being dropped.
+- **Read the release notes for the word `MIGRATION`.** Anything that needs a
+  backfill, a longer window, or downtime is called out there. Silence means the
+  three commands above are the whole procedure.
+- **The backup is not ceremony.** Forward-only means the only way back is the
+  dump you took first.
 
 ---
 

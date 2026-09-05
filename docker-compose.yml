@@ -180,6 +180,27 @@ services:
     restart: unless-stopped
     logging: *logging
 
+  # A mail catcher, for trying account recovery without a mail provider.
+  #
+  # Behind a profile, so `docker compose up -d` never starts it. Only
+  # `docker compose --profile mailpit up -d` does. Without SMTP_URL the app
+  # writes reset links to the server log and says so on the sign-in page —
+  # honest, and useless for checking that the email itself reads properly.
+  #
+  # NOT a production mail server. It accepts everything, delivers nothing, and
+  # shows it at http://localhost:8025. For real delivery set SMTP_URL to your
+  # provider; see DEPLOYMENT.md.
+  mailpit:
+    image: axllent/mailpit:latest
+    profiles: ["mailpit"]
+    ports:
+      - "${MAILPIT_UI_PORT:-8025}:8025"
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+    environment:
+      MP_MAX_MESSAGES: 500
+    restart: unless-stopped
+    logging: *logging
+
 volumes:
   postgres-data:
   redis-data:
