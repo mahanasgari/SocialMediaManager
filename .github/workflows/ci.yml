@@ -75,8 +75,117 @@ jobs:
       - name: "Gate G3 — every [V] marker cites a URL and retrieval date"
         run: node scripts/gate-evidence-markers.mjs
 
-      # G2 — activates with P2-05 (packages/ratelimit).
-      # Left commented rather than made permissive: a gate that passes vacuously
-      # is worse than no gate, because it reads as coverage.
-      # - name: "Gate G2 — every provider call has a declared rate budget"
-      #   run: pnpm --filter @smm/providers gate:budgets
+      # G2 was left commented until packages/ratelimit existed, on the grounds
+      # that a gate passing vacuously is worse than no gate. It exists, the
+      # budgets are declared, and the check passes — so the gate is on.
+      - name: "Gate G2 — every provider call has a declared rate budget"
+        run: pnpm --filter @smm/providers gate:budgets
+
+  # The suite that crosses process boundaries.
+  #
+  # A separate job from `verify` because it needs the whole stack running —
+  # Postgres, Redis, MinIO, the API, the worker and a built web app — and
+  # because a unit-test failure should be readable without scrolling past a
+  # browser log.
+  #
+  # It runs the PRODUCTION builds rather than dev servers. A dev server compiles
+  # routes on first visit and forgives things a build does not, so a suite that
+  # only ever passes against `next dev` is not testing what ships.
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_USER: smm, POSTGRES_PASSWORD: smm, POSTGRES_DB: smm_test }
+        options: >-
+          --health-cmd "pg_isready -U smm" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+        ports: ["5432:5432"]
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+        ports: ["6379:6379"]
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+          MINIO_DEFAULT_BUCKETS: smm
+        options: >-
+          --health-cmd "mc ready local" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+        ports: ["9000:9000"]
+
+    env:
+      DATABASE_URL: postgresql://smm_app_user:smm@localhost:5432/smm_test
+      MIGRATE_DATABASE_URL: postgresql://smm:smm@localhost:5432/smm_test
+      REDIS_URL: redis://localhost:6379
+      # http on localhost, so the session cookie drops the __Host- prefix and
+      # Secure — which is the documented behaviour and what the browser needs
+      # without TLS. See cookiePolicy().
+      PUBLIC_URL: http://localhost:3000
+      INTERNAL_API_URL: http://localhost:3001
+      S3_ENDPOINT: http://localhost:9000
+      S3_BUCKET: smm
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_REGION: us-east-1
+      AUTH_REGISTRATION: open
+      NODE_ENV: production
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Generate throwaway secrets
+        run: |
+          echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+          echo "SESSION_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - run: pnpm db:generate
+
+      - name: Apply migrations as the owner
+        run: DATABASE_URL="$MIGRATE_DATABASE_URL" pnpm --filter @smm/database migrate:deploy
+
+      - name: Provision the unprivileged application role
+        run: |
+          PGPASSWORD=smm psql -h localhost -U smm -d smm_test -v ON_ERROR_STOP=1 <<'SQL'
+            DO $$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'smm_app_user') THEN
+                CREATE ROLE smm_app_user LOGIN PASSWORD 'smm';
+              END IF;
+            END $$;
+            GRANT smm_app TO smm_app_user;
+          SQL
+
+      - name: Seed the demo workspace the suite signs in to
+        run: DATABASE_URL="$MIGRATE_DATABASE_URL" pnpm db:seed
+
+      - run: pnpm build
+
+      - name: Start the stack
+        run: |
+          node apps/api/dist/main.js > /tmp/api.log 2>&1 &
+          node apps/worker/dist/main.js > /tmp/worker.log 2>&1 &
+          node apps/web/.next/standalone/apps/web/server.js > /tmp/web.log 2>&1 &
+          # Wait for readiness rather than sleeping a guessed number of seconds:
+          # a fixed sleep is either flaky or slow, and usually both.
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:3001/api/v1/health >/dev/null \
+              && curl -sf http://localhost:3000/login >/dev/null && exit 0
+            sleep 2
+          done
+          echo "::error::the stack did not come up"; tail -40 /tmp/api.log /tmp/web.log; exit 1
+
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm e2e
+
+      - name: Server logs on failure
+        if: failure()
+        run: tail -60 /tmp/api.log /tmp/worker.log /tmp/web.log
