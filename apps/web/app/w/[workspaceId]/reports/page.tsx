@@ -1,4 +1,5 @@
 import { apiGet } from '@/lib/server-fetch'
+import { SavedReports, type SavedReport } from './saved.client'
 import { getWorkspace } from '@/lib/api'
 import { Card, ErrorCard, Muted, PageHeader } from '@/components/ui'
 import { RangePicker, ExportButton } from './report.client'
@@ -47,9 +48,10 @@ export default async function ReportsPage({
   const { days: rawDays } = await searchParams
   const days = clampDays(rawDays)
 
-  const [workspace, summary] = await Promise.all([
+  const [workspace, summary, saved] = await Promise.all([
     getWorkspace(workspaceId),
     apiGet<Summary>(`/api/v1/reports/summary?workspaceId=${workspaceId}&days=${days}`),
+    apiGet<SavedReport[]>(`/api/v1/reports/saved?workspaceId=${workspaceId}`),
   ])
 
   if (!workspace.ok)
@@ -68,6 +70,12 @@ export default async function ReportsPage({
       />
 
       <RangePicker workspaceId={workspaceId} days={days} />
+
+      <SavedReports
+        workspaceId={workspaceId}
+        saved={saved.ok ? saved.data : []}
+        currentDays={days}
+      />
 
       <Card className="mt-4 p-5">
         <p className="text-sm">{s.headline}</p>

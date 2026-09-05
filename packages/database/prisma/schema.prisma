@@ -110,6 +110,7 @@ model Workspace {
   @@index([organizationId, deletedAt])
   postingSlots PostingSlot[]
   analyticsSnapshots AnalyticsSnapshot[]
+  savedReports SavedReport[]
 }
 
 model User {
@@ -143,6 +144,7 @@ model User {
 
   @@index([email])
   providerSettings ProviderSetting[]
+  savedReports SavedReport[]
 }
 
 /// A null workspaceId means the membership is organization-wide.
@@ -1450,4 +1452,38 @@ model AnalyticsSnapshot {
 
   @@unique([workspaceId, day, socialAccountId])
   @@index([workspaceId, day])
+}
+
+/// A report configuration somebody wants back without rebuilding it.
+///
+/// The reports page takes a window and a set of filters and renders numbers.
+/// Saving one is the difference between "the monthly client report" being a
+/// thing you HAVE and a thing you reconstruct from memory on the last Friday of
+/// every month — and reconstructing it slightly differently each time is how two
+/// months of a report stop being comparable.
+///
+/// Deliberately stores the QUESTION, not the answer. A saved report re-runs
+/// against current data, so last month's saved report shows last month's numbers
+/// today and the same numbers next year. Storing the rendered figures would make
+/// it a snapshot, which is a different feature and the one people expect less.
+model SavedReport {
+  id             String   @id @default(dbgenerated("uuidv7()")) @db.Uuid
+  workspaceId    String   @db.Uuid
+  organizationId String   @db.Uuid
+  name           String
+  /// Rolling window in days. A saved report follows time rather than pinning to
+  /// the dates it was created on — "last 30 days" is what people mean.
+  windowDays     Int      @default(30)
+  /// Which accounts it covers. Empty means every account in the workspace, so a
+  /// report does not silently exclude a channel connected after it was saved.
+  accountIds     String[] @default([])
+  createdById    String?  @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
 }

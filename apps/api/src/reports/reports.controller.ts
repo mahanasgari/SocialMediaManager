@@ -1,4 +1,4 @@
-import { Controller, Get, Query, Res } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Query, Res } from '@nestjs/common'
 import { ApiOperation, ApiTags } from '@nestjs/swagger'
 import type { FastifyReply } from 'fastify'
 import { withTenant } from '@smm/database'
@@ -6,6 +6,9 @@ import { describeStatus } from '@smm/publishing'
 import { errors } from '../common/errors.js'
 import { Caller, resolveRead, type Principal } from '../auth/principal.js'
 import { MembershipService } from '../tenancy/membership.service.js'
+import { CurrentUser } from '../auth/current-user.js'
+import type { SessionPrincipal } from '../auth/session.service.js'
+import { z } from 'zod'
 
 /**
  * Reports and exports.
@@ -16,6 +19,16 @@ import { MembershipService } from '../tenancy/membership.service.js'
  * recipient already uses, and a branded PDF renderer is a large dependency for
  * an artefact that is worse.
  */
+const savedSchema = z.object({
+  workspaceId: z.string().uuid(),
+  name: z.string().trim().min(1).max(120),
+  // Bounded to match the column's CHECK constraint, so an out-of-range value is
+  // refused with a sentence rather than a database error.
+  windowDays: z.number().int().min(1).max(365).default(30),
+  /** Empty means every account — see the model comment for why that is right. */
+  accountIds: z.array(z.string().uuid()).default([]),
+})
+
 @ApiTags('reports')
 @Controller('reports')
 export class ReportsController {
@@ -114,6 +127,88 @@ export class ReportsController {
       .header('content-disposition', `attachment; filename="${filename}"`)
 
     return toCsv(rows)
+  }
+
+  @Get('saved')
+  @ApiOperation({ summary: 'Reports saved in this workspace' })
+  async listSaved(
+    @Query('workspaceId') workspaceId: string,
+    @CurrentUser() principal: SessionPrincipal | undefined
+  ) {
+    if (!principal) throw errors.unauthenticated()
+    if (!workspaceId) throw errors.validation('workspaceId is required.', 'workspaceId')
+    await this.memberships.requireAccess(principal.userId, workspaceId)
+
+    return withTenant(workspaceId, async (tx) =>
+      tx.savedReport.findMany({
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          windowDays: true,
+          accountIds: true,
+          createdBy: { select: { name: true } },
+        },
+      })
+    )
+  }
+
+  @Post('saved')
+  @ApiOperation({ summary: 'Save a report configuration' })
+  async save(@Body() body: unknown, @CurrentUser() principal: SessionPrincipal | undefined) {
+    if (!principal) throw errors.unauthenticated()
+    const input = savedSchema.safeParse(body)
+    if (!input.success) {
+      const issue = input.error.issues[0]
+      throw errors.validation(
+        issue ? `${issue.path.join('.') || 'body'}: ${issue.message}` : 'Invalid.',
+        issue?.path.join('.')
+      )
+    }
+
+    const access = await this.memberships.requireAccess(principal.userId, input.data.workspaceId)
+
+    return withTenant(input.data.workspaceId, async (tx) => {
+      const existing = await tx.savedReport.findFirst({
+        where: { name: input.data.name },
+        select: { id: true },
+      })
+      if (existing) {
+        // Names are how people find these again, so a duplicate is a mistake
+        // worth naming rather than a second row nobody can tell apart.
+        throw errors.validation(`A report called "${input.data.name}" already exists.`, 'name')
+      }
+
+      return tx.savedReport.create({
+        data: {
+          workspaceId: input.data.workspaceId,
+          organizationId: access.organizationId,
+          name: input.data.name,
+          windowDays: input.data.windowDays,
+          accountIds: input.data.accountIds,
+          createdById: principal.userId,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+        select: { id: true, name: true, windowDays: true, accountIds: true },
+      })
+    })
+  }
+
+  @Delete('saved/:id')
+  @ApiOperation({ summary: 'Delete a saved report' })
+  async removeSaved(
+    @Param('id') id: string,
+    @Query('workspaceId') workspaceId: string,
+    @CurrentUser() principal: SessionPrincipal | undefined
+  ) {
+    if (!principal) throw errors.unauthenticated()
+    if (!workspaceId) throw errors.validation('workspaceId is required.', 'workspaceId')
+    await this.memberships.requireAccess(principal.userId, workspaceId)
+
+    await withTenant(workspaceId, async (tx) => {
+      await tx.savedReport.deleteMany({ where: { id } })
+    })
+    return { id, removed: true }
   }
 
   @Get('summary')
