@@ -46,3 +46,10 @@ blob-report/
 
 # Playwright's saved sign-in, recreated on every run.
 .auth/
+
+# Claude Code session transcripts, if a home-directory copy ever lands here.
+# These are conversation logs, not project files, and they contain whatever was
+# pasted into a session — on this project that has included OAuth client secrets
+# and an ngrok authtoken. This repository has a GitHub remote; one `git add -A`
+# is all it would take.
+claude/

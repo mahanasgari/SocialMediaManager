@@ -364,6 +364,57 @@ async function seedContent(
       }
     }
 
+    // Read rather than passed in: this function already has the workspace, and
+    // threading an organization id through three call sites to save one indexed
+    // lookup in a seed script is the wrong trade.
+    const ws = await tx.workspace.findUniqueOrThrow({
+      where: { id: workspaceId },
+      select: { organizationId: true },
+    })
+
+    // A posting queue, so the composer's "Queue for…" button and the queue page
+    // are populated on a fresh install rather than showing empty states that
+    // read as unbuilt features. Weekday mornings plus two afternoons — the same
+    // shape the product suggests when someone sets one up by hand.
+    for (const slot of [
+      { dayOfWeek: 1, hour: 9, minute: 0 },
+      { dayOfWeek: 2, hour: 9, minute: 0 },
+      { dayOfWeek: 3, hour: 9, minute: 0 },
+      { dayOfWeek: 4, hour: 9, minute: 0 },
+      { dayOfWeek: 5, hour: 9, minute: 0 },
+      { dayOfWeek: 2, hour: 15, minute: 30 },
+      { dayOfWeek: 4, hour: 15, minute: 30 },
+    ]) {
+      await tx.postingSlot.create({
+         
+        data: {
+          workspaceId,
+          organizationId: ws.organizationId,
+          ...slot,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        } as any,
+      })
+    }
+
+    // One saved report, because an empty list of saved reports does not explain
+    // what a saved report IS. A named example does.
+    await tx.savedReport.create({
+       
+      data: {
+        workspaceId,
+        organizationId: ws.organizationId,
+        name: 'Monthly summary',
+        windowDays: 30,
+        createdById: authorId,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+    })
+
+    // NOT seeding AnalyticsSnapshot. The worker's rollup builds those from the
+    // PostMetric rows above within a tick or two, and a hand-written snapshot
+    // that disagreed with the metrics it claims to summarise would be a
+    // demo that lies about its own arithmetic.
+
     return created
   })
 }

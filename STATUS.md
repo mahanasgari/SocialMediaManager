@@ -6,8 +6,9 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1382 unit and integration tests, plus 34 end-to-end. 0 failing. Type-check, lint and the evidence-citation gate
-all clean.**
+**1418 unit and integration tests, plus 35 end-to-end. 0 failing. Type-check, lint and all four
+standing gates clean — G1 isolation (90 checks), G2 rate budgets (367), G3 evidence citations
+(64 markers across 97 files), G4 additive migrations (31).**
 
 ---
 
@@ -74,6 +75,36 @@ Three bugs were found by looking at the running app rather than the code:
   always undefined for `/w/:id/posts`; the section is at index 3.
 - **`asChild` buttons threw at runtime.** Radix's Slot requires exactly one
   child and counts the `false` that `{loading && …}` evaluates to.
+
+### Bulk import, the queue, and the things a calendar needs
+
+**A posting queue.** A workspace declares when it posts — weekdays at 09:00, two
+afternoons — and a new post takes the next free slot. One button in the composer
+labelled with the actual time it will use, in the workspace's timezone, because
+"Add to queue" without a time asks someone to trust a black box. Wall-clock times
+plus an IANA zone, reusing the recurrence conversion, so a slot survives a
+daylight-saving change.
+
+**CSV import.** One row per post, with a preview before anything is created. The
+parser is a state machine rather than a split, because real spreadsheet exports
+contain commas inside quoted cells, doubled quotes inside those, Excel's BOM,
+CRLF endings — and the one that corrupts silently, a post body with a line break,
+which a naive parser turns into two rows and shifts every column after it. A
+broken row is reported with its line number and refused; "imported 18 of 20"
+leaves someone diffing a spreadsheet against a calendar.
+
+**Cursor pagination** on posts, the inbox and the media library. The inbox needed
+a tiebreaker the others did not: it sorts by last activity, which is not unique,
+and a cursor over a non-unique sort repeats rows at a page boundary or skips
+them.
+
+**Saved reports**, which store the question rather than the answer — a rolling
+window re-run against current data, so a saved report shows this month's numbers
+this month.
+
+**Analytics snapshots.** Dashboards read a daily rollup rather than scanning every
+metric row ever captured, with a fallback to raw while the rollup catches up so a
+fresh install never shows an empty chart over data it has.
 
 ### Writing one post for several networks
 

@@ -1,5 +1,11 @@
 # TASKS
 
+> **This file is the PLAN, not a status board.** It records what was intended and
+> in what order. It does not track what is built — several items here shipped
+> later than their phase and a few shipped in a different shape. `STATUS.md` is
+> the honest account of what exists; read that first if you want to know the
+> state of the code.
+
 Execution plan. Grouped by phase, then by vertical slice.
 
 Every task carries a **stable ID**, a one-line description, **dependencies by ID**, an effort band, and acceptance criteria written so that passing or failing is unambiguous. Each phase ends with a **gate task**.
