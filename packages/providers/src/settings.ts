@@ -103,7 +103,7 @@ const KEYS = [
     provider: 'facebook',
     label: 'Meta webhook verify token',
     secret: true,
-    help: 'A value YOU invent, not one Meta issues. Paste the same string here and into the Verify Token box in Meta\u2019s webhook setup; Meta sends it back during the subscription handshake and the two must match.',
+    help: 'A value YOU invent, not one Meta issues. Paste the same string here and into the Verify Token box in Meta’s webhook setup; Meta sends it back during the subscription handshake and the two must match. Any long random string will do.',
   },
   {
     key: 'INSTAGRAM_APP_ID',
