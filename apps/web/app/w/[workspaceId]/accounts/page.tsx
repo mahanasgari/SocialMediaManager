@@ -1,7 +1,7 @@
-import { getAccounts, getProviders, getWorkspace } from '@/lib/api'
+import { getAccounts, getProviders, getWorkspace, type ProviderDescriptor } from '@/lib/api'
 import { Badge, Card, EmptyState, ErrorCard, Muted, PageHeader } from '@/components/ui'
-import { ConnectButton, DisconnectButton } from './actions.client'
-import { ConnectForm } from './connect-form.client'
+import { DisconnectButton } from './actions.client'
+import { ProviderGroup } from './provider-group.client'
 
 export default async function AccountsPage({
   params,
@@ -94,56 +94,13 @@ export default async function AccountsPage({
 
         <div className="mt-3 space-y-2">
           {providers.ok ? (
-            providers.data.map((p) => (
-              <Card
-                key={p.id}
-                // A stable handle for the end-to-end suite. The alternative is
-                // a locator that walks the DOM by class name, which breaks the
-                // next time this card is restyled — and a test that breaks on
-                // restyling teaches people to distrust the suite.
-                data-testid={`provider-${p.id}`}
-                className="flex flex-wrap items-start justify-between gap-4 p-4"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium">{p.label}</p>
-                    {p.state === 'mock' && <Badge>simulator</Badge>}
-                    {p.state === 'skeleton' && <Badge>not built yet</Badge>}
-                  </div>
-                  <p className="mt-0.5 text-xs">
-                    <Muted>{p.disabledReason ?? capabilitySummary(p.capabilities)}</Muted>
-                  </p>
-
-                  {/* A caveat on a connector that works. Rendered in warning
-                      colour and BEFORE anyone connects, because the failure it
-                      describes is invisible afterwards: the API returns success
-                      and the post reaches nobody. */}
-                  {p.notice && (
-                    <p className="mt-1.5 max-w-prose text-xs text-warning">{p.notice}</p>
-                  )}
-                </div>
-                {/* Which control appears comes from the provider's own
-                    declaration, not from a list here — so a new connector of
-                    either kind needs no change to this page. A form is shown
-                    whenever anything must be collected first, whether that is
-                    the whole credential or just a Mastodon instance. */}
-                {p.connectFields.length > 0 ? (
-                  <ConnectForm
-                    workspaceId={workspaceId}
-                    provider={p.id}
-                    label={p.label}
-                    fields={[...p.connectFields]}
-                    authStyle={p.authStyle}
-                    disabled={!canConnect || Boolean(p.disabledReason)}
-                  />
-                ) : (
-                  <ConnectButton
-                    workspaceId={workspaceId}
-                    provider={p.id}
-                    disabled={!canConnect || Boolean(p.disabledReason)}
-                  />
-                )}
-              </Card>
+            groupByNetwork(providers.data).map((routes) => (
+              <ProviderGroup
+                key={routes[0]!.network}
+                workspaceId={workspaceId}
+                routes={routes}
+                canConnect={canConnect}
+              />
             ))
           ) : (
             <ErrorCard message={providers.message} requestId={providers.requestId} />
@@ -155,18 +112,18 @@ export default async function AccountsPage({
 }
 
 /**
- * Built from the capability matrix the API serves, never from a hard-coded list.
- * That is what keeps "never claim unsupported functionality" structural rather
- * than a discipline someone has to remember when adding a provider.
+ * Providers grouped by the network they reach, order preserved.
+ *
+ * Insertion order matters and is the registry's: the direct connector is
+ * registered before its Buffer route, so "Direct" is offered first and a
+ * grouped network keeps the position its primary connector had in the list.
  */
-function capabilitySummary(capabilities: Record<string, boolean>): string {
-  const supported = [
-    capabilities['textPost'] && 'text',
-    capabilities['imagePost'] && 'images',
-    capabilities['videoPost'] && 'video',
-    capabilities['thread'] && 'threads',
-    capabilities['dm'] && 'DMs',
-    capabilities['analytics'] && 'analytics',
-  ].filter(Boolean)
-  return supported.length > 0 ? `Supports ${supported.join(', ')}` : 'No publishing capabilities'
+function groupByNetwork(providers: ProviderDescriptor[]): ProviderDescriptor[][] {
+  const groups = new Map<string, ProviderDescriptor[]>()
+  for (const provider of providers) {
+    const existing = groups.get(provider.network)
+    if (existing) existing.push(provider)
+    else groups.set(provider.network, [provider])
+  }
+  return [...groups.values()]
 }

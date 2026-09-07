@@ -34,6 +34,14 @@ export type SocialAccount = {
 export type ProviderDescriptor = {
   id: string
   label: string
+  /**
+   * The network reached, when several connectors reach the same one.
+   *
+   * Equals `id` for a connector that is the only route to its network. The
+   * accounts page groups on this so Instagram appears once with a choice of
+   * route rather than three times as unrelated entries.
+   */
+  network: string
   state: 'implemented' | 'skeleton' | 'mock'
   configured: boolean
   capabilities: Record<string, boolean>

@@ -204,6 +204,54 @@ Source: https://developers.facebook.com/documentation/instagram-platform/content
 Reels are a different surface entirely: MOV or MP4, H264 or HEVC video, AAC audio at or below 48 kHz, 23–60 fps, aspect 0.01:1 to 10:1 (9:16 recommended), closed GOP, 4:2:0 chroma, moov atom at the front of the file.
 Source: https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media/ retrieved 2026-08-29 **[V]**
 
+### Buffer routes — Instagram and Facebook without a Meta app
+
+A **route**, not a network. Posting here reaches Instagram or Facebook exactly as
+posting directly does, with Buffer holding the OAuth grant we would otherwise
+hold ourselves. Registered as `instagramBuffer` and `facebookBuffer`, grouped in
+the connect UI under the same network as their direct counterparts.
+
+**Why a per-workspace API key and not OAuth.** Buffer's third-party OAuth is
+documented but closed: new client registration on the legacy REST API has been
+shut since 2019, and that API is fully retired on 1 February 2027. The GraphQL
+API that replaces it issues **personal API keys** — a key acts on behalf of one
+Buffer account and reaches every channel in it. There is therefore no way to let
+an end user connect *their* Buffer; a workspace pastes a key from Settings → API
+in Buffer and this product publishes through that account.
+Sources: https://buffer.com/resources/legacy-rest-api-retired/ and
+https://developers.buffer.com/guides/authentication retrieved 2026-09-07 **[V]**
+
+Endpoint `https://api.buffer.com`, `Authorization: Bearer <key>`. `createPost`
+takes a single `channelId`, so fan-out across channels is ours to do — one
+mutation per channel, which suits a model where a variant is already per-account
+and a partial failure must stay attributable.
+Source: https://developers.buffer.com/examples/create-text-post.html retrieved 2026-09-07 **[V]**
+
+**What the route costs, and why the matrix says so.** Buffer publishes and
+reports; it exposes no comments, replies, mentions or DMs, so an account
+connected this way cannot feed the inbox. Two capabilities are declared `false`
+that a careless reading of Buffer's schema would have made `true`:
+
+- `deletePost` — the `deletePost` mutation exists, but it removes **Buffer's
+  record** of a post, not the post on the network. Declaring it true would let
+  someone click Delete, watch the row vanish, and leave the post public.
+- `editPost` — likewise edits only what Buffer has not sent yet.
+
+`retrievePosts` **is** true: the `posts` query reads back what Buffer holds for a
+channel, so a publish whose response was lost is reconciled by looking rather
+than parked in NEEDS_REVIEW. That is a better idempotency story than Telegram's.
+
+**Media must be publicly reachable.** Buffer fetches assets by URL from its own
+servers, the same constraint Instagram's own API imposes and the same one
+`MEDIA_PUBLIC_MODE` exists for. A deployment whose object storage is not exposed
+can publish text through this route but not images.
+Source: https://developers.buffer.com/examples/create-image-post.html retrieved 2026-09-07 **[V]**
+
+Rate budgets are `[A]`. Buffer documents no numeric limits, so the declared
+budgets are deliberately low — the gate requires a budget precisely so an unknown
+limit is treated as a small one rather than an absent one, and the network's own
+ceiling still applies underneath.
+
 ### TikTok
 Unaudited apps can call the Content Posting API, but **all content is forced to private/self-only visibility** — real people cannot see it. Public posting requires passing TikTok's Content Posting audit, which demands a demo video of a compliant, working integration. Ships as `skeleton` until audited, and the UI must never imply public reach.
 Source: https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post retrieved 2026-08-29 **[V]**

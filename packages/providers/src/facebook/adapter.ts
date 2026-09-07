@@ -58,6 +58,7 @@ import { capabilities, limits, media, text } from './capabilities.js'
  */
 export class FacebookProvider implements AnyProvider {
   readonly id = 'facebook' as const
+  readonly network = 'facebook' as const
   readonly label = 'Facebook Pages'
   readonly state = 'implemented' as const
   readonly capabilities = capabilities

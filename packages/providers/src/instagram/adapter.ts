@@ -65,6 +65,7 @@ import { capabilities, limits, media, text } from './capabilities.js'
  */
 export class InstagramProvider implements AnyProvider {
   readonly id = 'instagram' as const
+  readonly network = 'instagram' as const
   readonly label = 'Instagram'
   readonly state = 'implemented' as const
   readonly capabilities = capabilities

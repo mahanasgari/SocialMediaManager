@@ -7,6 +7,8 @@ import { MastodonProvider } from './mastodon/adapter.js'
 import { FacebookProvider } from './facebook/adapter.js'
 import { InstagramLoginProvider } from './instagramLogin/adapter.js'
 import { InstagramProvider } from './instagram/adapter.js'
+import { InstagramBufferProvider } from './instagramBuffer/adapter.js'
+import { FacebookBufferProvider } from './facebookBuffer/adapter.js'
 import { ThreadsProvider } from './threads/adapter.js'
 import { XProvider } from './x/adapter.js'
 import { LinkedInProvider } from './linkedin/adapter.js'
@@ -65,6 +67,11 @@ export function all(): AnyProvider[] {
 export type ProviderDescriptor = {
   id: ProviderId
   label: string
+  /**
+   * The network this connector reaches. Equals `id` unless several connectors
+   * reach one network, in which case the connect UI groups them as routes.
+   */
+  network: string
   state: 'implemented' | 'skeleton' | 'mock'
   configured: boolean
   capabilities: Record<string, boolean>
@@ -144,6 +151,7 @@ export function describe(provider: AnyProvider): ProviderDescriptor {
   return {
     id: provider.id,
     label: provider.label,
+    network: provider.network ?? provider.id,
     state: provider.state,
     configured,
     capabilities: { ...provider.capabilities },
@@ -208,3 +216,17 @@ register(new WordPressProvider())
 register(new BloggerProvider())
 register(new VKProvider())
 register(new WeChatProvider())
+
+// The Buffer routes: the same two networks reached through a third party.
+//
+// Registered alongside the direct connectors rather than replacing them,
+// because they are a genuinely different trade — no Meta app and no App Review,
+// paid for with no inbox, no comments and no delete. Which of those matters
+// more is the workspace's call, so both are offered and the capability matrix
+// states the difference rather than a paragraph of documentation nobody reads.
+//
+// AFTER the direct connectors deliberately. The connect screen groups routes by
+// network in registration order, so this is what puts "Direct" first and leaves
+// each network sitting where its primary connector always sat.
+register(new InstagramBufferProvider())
+register(new FacebookBufferProvider())

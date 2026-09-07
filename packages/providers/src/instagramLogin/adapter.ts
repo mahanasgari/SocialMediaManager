@@ -66,6 +66,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
  */
 export class InstagramLoginProvider implements AnyProvider {
   readonly id = 'instagramLogin' as const
+  readonly network = 'instagram' as const
   readonly label = 'Instagram (Instagram Login)'
   readonly state = 'implemented' as const
   readonly capabilities = capabilities

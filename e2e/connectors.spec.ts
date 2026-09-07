@@ -90,9 +90,18 @@ test.describe('connector honesty', () => {
     // Two different disabled states that must never be conflated: one the
     // operator can fix by pasting a client id, one they cannot fix at all.
     // Facebook is implemented and simply has no credentials on this install.
-    const facebook = page.getByTestId('provider-facebook')
+    //
+    // Addressed by NETWORK rather than by provider since Facebook gained a
+    // second route. The card belongs to the network and shows the selected
+    // route's state; `provider-facebook` is now the button that selects the
+    // direct route. The card must open on that route — defaulting to whichever
+    // route happened to work would hide this very sentence behind a click.
+    const facebook = page.getByTestId('network-facebook')
     await expect(facebook.getByText(/not configured/i)).toBeVisible({ timeout: 20_000 })
     await expect(facebook.getByText(/not implemented|not built/i)).toHaveCount(0)
+
+    // And the alternative is named rather than left to be discovered.
+    await expect(facebook.getByTestId('provider-facebookBuffer')).toBeVisible()
   })
 
   test('implemented connectors that use credentials show a form, not a dead button', async ({

@@ -95,6 +95,8 @@ export type ProviderId =
   | 'facebook'
   | 'instagram'
   | 'instagramLogin'
+  | 'instagramBuffer'
+  | 'facebookBuffer'
   | 'threads'
   | 'x'
   | 'linkedin'

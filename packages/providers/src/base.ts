@@ -169,6 +169,22 @@ export interface BaseProvider {
   /** True when the operator supplied credentials for this provider. */
   isConfigured(): boolean
 
+  /**
+   * The NETWORK this connector reaches, when several connectors reach the same one.
+   *
+   * Defaults to the provider id, so a connector that is the only way to reach
+   * its network says nothing. Instagram is now reachable three ways — Facebook
+   * Login, Instagram Login and Buffer — and those are three providers with
+   * genuinely different capabilities, not one provider with a flag. But to a
+   * person connecting an account they are one network and a choice of route,
+   * and a connect screen listing them as three unrelated entries invites
+   * picking the wrong one for reasons nobody explained.
+   *
+   * Grouping is presentation only. Nothing downstream branches on it: the
+   * publisher, composer and inbox continue to see three distinct providers.
+   */
+  readonly network?: string
+
   /** Defaults to 'oauth' when a provider does not say otherwise. */
   readonly authStyle?: AuthStyle
 

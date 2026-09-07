@@ -6,9 +6,9 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1418 unit and integration tests, plus 35 end-to-end. 0 failing. Type-check, lint and all four
-standing gates clean — G1 isolation (90 checks), G2 rate budgets (367), G3 evidence citations
-(64 markers across 97 files), G4 additive migrations (31).**
+**1483 unit and integration tests, plus 35 end-to-end. 0 failing. Type-check, lint and all four
+standing gates clean — G1 isolation (90 checks), G2 rate budgets (395), G3 evidence citations
+(72 markers across 104 files), G4 additive migrations (31).**
 
 ---
 
@@ -914,6 +914,19 @@ Both are asserted against the live database rather than reviewed by eye.
 ---
 
 ## Built, but not exercised against a live provider
+
+The **Buffer routes** — `instagramBuffer` and `facebookBuffer` — are implemented,
+unit tested against a stubbed transport, and have never spoken to Buffer. No key
+has been issued on this install, so the GraphQL operation names, the shape of the
+`createPost` union and the `Post.metrics` keys come from Buffer's published
+documentation rather than from a response anyone has seen. The auth model, the
+endpoint and the capability consequences are documented facts; whether Buffer
+accepts exactly what we send is unverified until a key exists.
+
+Note also that these two are currently the ONLY working route to Instagram or
+Facebook on this install, because the direct connectors have no Meta credentials.
+The connect screen still opens on the direct route and states that, rather than
+quietly selecting the third-party one.
 
 The Mastodon publish, media-processing and reconciliation paths are implemented
 and unit tested but have not run against a real instance with a real account,
