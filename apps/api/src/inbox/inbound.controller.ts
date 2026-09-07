@@ -6,6 +6,8 @@ import { withInboundRouter } from '@smm/database'
 import { errors } from '../common/errors.js'
 import { inboundEvents } from '@smm/observability'
 import { Public } from '../auth/auth-mode.guard.js'
+import { providerSetting } from '@smm/providers'
+import { ConnectorSettingsService } from '../admin/connector-settings.service.js'
 
 /**
  * The inbound webhook receiver.
@@ -23,6 +25,8 @@ import { Public } from '../auth/auth-mode.guard.js'
 @ApiTags('inbound')
 @Controller('hooks')
 export class InboundController {
+  constructor(private readonly connectorSettings: ConnectorSettingsService) {}
+
   /**
    * Meta's subscription handshake.
    *
@@ -32,13 +36,23 @@ export class InboundController {
   @Public()
   @Get(':provider')
   @ApiOperation({ summary: 'Subscription verification handshake' })
-  verify(
+  async verify(
     @Param('provider') provider: string,
     @Query('hub.mode') mode: string,
     @Query('hub.verify_token') token: string,
     @Query('hub.challenge') challenge: string
-  ): string {
-    const expected = process.env['META_WEBHOOK_VERIFY_TOKEN']
+  ): Promise<string> {
+    // Read through the settings store rather than straight from process.env.
+    //
+    // Its siblings META_APP_ID and META_APP_SECRET have always been settable in
+    // Settings > Connector credentials, and this one was not — so on a container
+    // deployment the only way to set it was to edit .env and redeploy, in the
+    // middle of a subscription handshake that gives one unhelpful sentence when
+    // it fails. Same store, same precedence: a value set in the UI wins over
+    // the environment.
+    await this.connectorSettings.refreshIfStale()
+    const expected = providerSetting('META_WEBHOOK_VERIFY_TOKEN')
+
     if (mode !== 'subscribe' || !expected || token !== expected) {
       throw errors.notFound('subscription')
     }

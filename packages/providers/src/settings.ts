@@ -99,6 +99,13 @@ const KEYS = [
     help: 'Also verifies inbound webhook signatures, so comments and messages need it too.',
   },
   {
+    key: 'META_WEBHOOK_VERIFY_TOKEN',
+    provider: 'facebook',
+    label: 'Meta webhook verify token',
+    secret: true,
+    help: 'A value YOU invent, not one Meta issues. Paste the same string here and into the Verify Token box in Meta\u2019s webhook setup; Meta sends it back during the subscription handshake and the two must match.',
+  },
+  {
     key: 'INSTAGRAM_APP_ID',
     provider: 'instagramLogin',
     label: 'Instagram app ID',
