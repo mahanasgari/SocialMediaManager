@@ -49,6 +49,16 @@ export function assetsFor(
 /**
  * A Buffer post in the shape reconciliation compares.
  *
+ * `mediaCount` is COUNTED, never assumed. Fingerprint matching rejects any
+ * candidate whose media count differs — deliberately, since a provider may
+ * rewrite text but will not silently change how many images are attached. A
+ * hardcoded zero therefore made every Instagram post unmatchable, because an
+ * Instagram post always has media: a lost response would reconcile to "not
+ * published", the variant would be retried, and the result is a duplicate
+ * public post, which this architecture treats as unrecoverable. Declaring
+ * `retrievePosts: true` while returning a count we made up is worse than
+ * declaring it false.
+ *
  * `createdAt` falls back to the epoch when Buffer omits it. That sounds
  * careless and is the safe direction: retrievePosts callers filter by
  * `createdAt >= since`, so an unknown date drops the post from the comparison
@@ -59,6 +69,6 @@ export function toRemotePost(post: BufferPost): RemotePost {
     remoteId: post.id,
     createdAt: post.createdAt ? new Date(post.createdAt) : new Date(0),
     text: post.text ?? '',
-    mediaCount: 0,
+    mediaCount: post.assets?.length ?? 0,
   }
 }

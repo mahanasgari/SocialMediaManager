@@ -227,6 +227,27 @@ mutation per channel, which suits a model where a variant is already per-account
 and a partial failure must stay attributable.
 Source: https://developers.buffer.com/examples/create-text-post.html retrieved 2026-09-07 **[V]**
 
+**`mode: shareNow`, never `addToQueue`.** By the time an adapter's `publish` runs
+the scheduler has already waited — the worker claims variants whose
+`scheduledAt` has passed — so publish means "send now". `addToQueue` hands that
+decision back to Buffer's own posting schedule, which would take a post
+scheduled for 09:00, release it from our queue at 09:00, and publish it whenever
+Buffer's next slot came round. The calendar would show a time that never
+happened. `mode` accepts `shareNow`, `addToQueue`, `shareNext` and
+`customScheduled`; the last takes an ISO 8601 `dueAt` and is kept available for a
+caller that genuinely wants Buffer to hold the post.
+Source: https://developers.buffer.com/examples/create-scheduled-post.html retrieved 2026-09-08 **[V]**
+
+**`retrievePosts` must return a real media count.** Fingerprint matching rejects
+any candidate whose `mediaCount` differs from the fingerprint's, on the sound
+reasoning that a provider may rewrite text but will not silently change how many
+images are attached. So the `posts` query selects `assets { id }` and the count
+is taken from it. An assumed zero made every Instagram post unmatchable — an
+Instagram post always has media — which would reconcile a lost response to "not
+published", retry the variant, and produce a duplicate public post. Declaring
+`retrievePosts: true` while returning an invented count is worse than declaring
+it false.
+
 **What the route costs, and why the matrix says so.** Buffer publishes and
 reports; it exposes no comments, replies, mentions or DMs, so an account
 connected this way cannot feed the inbox. Two capabilities are declared `false`

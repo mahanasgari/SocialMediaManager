@@ -189,7 +189,10 @@ export type BufferPostInput = {
   channelId: string
   text: string
   assets?: ReadonlyArray<{ image: { url: string } } | { video: { url: string } }>
-  /** Absent means "add to the queue"; present means publish at this instant. */
+  /**
+   * Absent means publish NOW, which is what the scheduler wants. Present hands
+   * the timing to Buffer for that instant instead. ISO 8601.
+   */
   dueAt?: string
 }
 
@@ -198,17 +201,29 @@ export type BufferPost = {
   status?: string | null
   text?: string | null
   createdAt?: string | null
+  /** Selected so reconciliation can count media rather than assume none. */
+  assets?: Array<{ id?: string | null }> | null
   metrics?: Array<{ key?: string | null; value?: number | null }> | null
 }
 
 /**
  * Creates one post on one channel.
  *
- * `mode` is chosen rather than defaulted. `addToQueue` would hand the timing to
- * Buffer's own posting schedule, which means a post this product scheduled for
- * 09:00 would go out whenever Buffer's queue happened to reach it — the
- * calendar would show a time that was never real. `customScheduled` with an
- * explicit `dueAt` keeps the time the user chose authoritative.
+ * `mode` decides WHO owns the timing, and the answer must be us.
+ *
+ * By the time this runs, the scheduler has already waited: the worker claims
+ * variants whose `scheduledAt` has passed and then calls `publish`, so publish
+ * means "send this now". `addToQueue` would hand that decision straight back to
+ * Buffer's own posting schedule — a post scheduled for 09:00 would leave our
+ * queue at 09:00 and go out whenever Buffer's next slot came round, hours or
+ * days later, with our calendar showing a time that never happened.
+ *
+ * So the default is `shareNow`. `dueAt` remains for a caller that genuinely
+ * wants Buffer to hold the post, and switches to `customScheduled`.
+ *
+ * [V] mode accepts shareNow, addToQueue, shareNext, customScheduled; dueAt is
+ *     ISO 8601. https://developers.buffer.com/examples/create-scheduled-post.html
+ *     retrieved 2026-09-08
  */
 export async function createPost(
   provider: ProviderId,
@@ -236,8 +251,8 @@ export async function createPost(
         text: input.text,
         ...(input.assets && input.assets.length > 0 ? { assets: input.assets } : {}),
         ...(input.dueAt
-          ? { mode: 'customScheduled', schedulingType: 'custom', dueAt: input.dueAt }
-          : { mode: 'addToQueue', schedulingType: 'automatic' }),
+          ? { mode: 'customScheduled', schedulingType: 'automatic', dueAt: input.dueAt }
+          : { mode: 'shareNow', schedulingType: 'automatic' }),
       },
     }
   )
@@ -249,23 +264,6 @@ export async function createPost(
     throw new ProviderError(provider, 'ContentRejected', messageOf(result.message))
   }
   return result.post
-}
-
-/** Removes a post Buffer still holds. Published posts are gone from our reach. */
-export async function deletePost(
-  provider: ProviderId,
-  apiKey: string,
-  postId: string
-): Promise<void> {
-  await bufferRequest(
-    provider,
-    apiKey,
-    'deletePost',
-    `mutation DeletePost($input: DeletePostInput!) {
-       deletePost(input: $input) { __typename ... on MutationError { message } }
-     }`,
-    { input: { id: postId } }
-  )
 }
 
 /**
@@ -287,7 +285,7 @@ export async function listPosts(
     'posts',
     `query Posts($input: PostsInput!, $first: Int!) {
        posts(input: $input, first: $first) {
-         edges { node { id status text createdAt } }
+         edges { node { id status text createdAt assets { id } } }
        }
      }`,
     { input: { channelIds: [channelId] }, first }

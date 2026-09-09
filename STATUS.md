@@ -6,9 +6,9 @@ started. Kept blunt on purpose.
 Last verified: **2026-08-30**, against a live Postgres, Redis and MinIO, with the
 API and worker running.
 
-**1483 unit and integration tests, plus 35 end-to-end. 0 failing. Type-check, lint and all four
+**1494 unit and integration tests, plus 35 end-to-end. 0 failing. Type-check, lint and all four
 standing gates clean — G1 isolation (90 checks), G2 rate budgets (395), G3 evidence citations
-(72 markers across 104 files), G4 additive migrations (31).**
+(74 markers across 104 files), G4 additive migrations (31).**
 
 ---
 

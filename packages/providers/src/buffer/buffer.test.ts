@@ -291,6 +291,25 @@ describe('sending a post', () => {
     expect(sent.variables.input.assets).toEqual([{ image: { url: 'https://cdn.test/a.jpg' } }])
   })
 
+  it('publishes NOW rather than handing the timing back to Buffer', async () => {
+    // publish() is called by the worker only once scheduledAt has passed, so it
+    // means "send this now". addToQueue would give the decision back to
+    // Buffer's own posting schedule — a post scheduled for 09:00 would go out
+    // whenever Buffer's next slot came round, and the calendar would show a
+    // time that never happened.
+    const calls = stub([
+      { body: { data: { createPost: { __typename: 'PostActionSuccess', post: { id: 'p' } } } } },
+    ])
+
+    await instagram.publish(IG_ACCOUNT, CREDENTIAL, payload())
+
+    const sent = JSON.parse(calls[0]?.body ?? '{}') as {
+      variables: { input: { mode: string; dueAt?: string } }
+    }
+    expect(sent.variables.input.mode).toBe('shareNow')
+    expect(sent.variables.input.dueAt).toBeUndefined()
+  })
+
   it('reports a post Buffer has not sent yet as pending', async () => {
     stub([
       {
@@ -363,6 +382,43 @@ describe('reading posts back', () => {
       new Date('2026-09-01T00:00:00Z')
     )
     expect(found.map((p) => p.remoteId)).toEqual(['new'])
+  })
+
+  it('counts media from the assets Buffer returns, never assuming zero', async () => {
+    // The bug this locks down is severe and silent. Fingerprint matching
+    // REJECTS a candidate whose media count differs, so a hardcoded zero made
+    // every Instagram post unmatchable — an Instagram post always has media.
+    // A lost response would then reconcile to "not published", the variant
+    // would be retried, and the result is a duplicate public post.
+    stub([
+      {
+        body: {
+          data: {
+            posts: {
+              edges: [
+                {
+                  node: {
+                    id: 'p1',
+                    text: 'a',
+                    createdAt: '2026-09-06T12:00:00Z',
+                    assets: [{ id: 'a1' }, { id: 'a2' }],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    ])
+
+    const found = await instagram.retrievePosts(IG_ACCOUNT, CREDENTIAL, new Date(0))
+    expect(found[0]?.mediaCount).toBe(2)
+  })
+
+  it('asks Buffer for the assets, or the count could not be right', async () => {
+    const calls = stub([{ body: { data: { posts: { edges: [] } } } }])
+    await instagram.retrievePosts(IG_ACCOUNT, CREDENTIAL, new Date(0))
+    expect(calls[0]?.body).toContain('assets')
   })
 
   it('drops an undated post from the window rather than matching it wrongly', () => {
