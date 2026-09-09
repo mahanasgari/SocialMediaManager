@@ -227,6 +227,22 @@ mutation per channel, which suits a model where a variant is already per-account
 and a partial failure must stay attributable.
 Source: https://developers.buffer.com/examples/create-text-post.html retrieved 2026-09-07 **[V]**
 
+**The published examples do not match the schema.** Every operation was checked
+by introspection against the live API on 2026-09-10, and five things written
+from the documentation were wrong — each failing every call it appeared in:
+`channels` and `posts` both require an `organizationId` (no example shows one,
+so the account's organization must be fetched first and is cached per key);
+`createPost` requires `needsApproval`; `assets` is `[AssetInput!]!` so a
+text-only post sends `[]` rather than omitting the field; the result union is
+`PostActionPayload` with six error members, not the `MutationError` the examples
+show; and `PostMetric` is keyed by `name`, not `key`. A sixth surfaced on the
+first live call: `Post.error` is a `PostPublishingError` object, not a string.
+
+The general lesson, and the reason this paragraph exists: forty unit tests
+against a stubbed transport were green throughout. A stub tests that our code
+does what we expect; it cannot test whether our expectation matches the
+provider. Only the live schema settles that.
+
 **`mode: shareNow`, never `addToQueue`.** By the time an adapter's `publish` runs
 the scheduler has already waited — the worker claims variants whose
 `scheduledAt` has passed — so publish means "send now". `addToQueue` hands that

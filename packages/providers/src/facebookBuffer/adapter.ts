@@ -155,14 +155,20 @@ export class FacebookBufferProvider implements AnyProvider {
 
     void payload.idempotencyKey
 
-    const assets = assetsFor(payload.media)
+    // `assets` is non-null in Buffer's schema, so a text-only post sends an
+    // empty list. Omitting it — which is what this did first — is a validation
+    // error, and would have failed every text-only Facebook post.
     const post = await createPost('facebookBuffer', credential.accessToken, {
       channelId: account.providerAccountId,
       text: payload.text,
-      ...(assets && assets.length > 0 ? { assets } : {}),
+      assets: assetsFor(payload.media),
     })
 
-    return { remoteId: post.id, pending: post.status !== 'sent' }
+    return {
+      remoteId: post.id,
+      ...(post.externalLink ? { remoteUrl: post.externalLink } : {}),
+      pending: post.status !== 'sent',
+    }
   }
 
   async retrievePosts(

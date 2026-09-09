@@ -197,9 +197,11 @@ export class InstagramBufferProvider implements AnyProvider {
 
     return {
       remoteId: post.id,
-      // Buffer's own id, not Instagram's. There is no Instagram permalink until
-      // Buffer sends it, and pretending otherwise would put a dead link on the
-      // posts list.
+      // Buffer's own id. `externalLink` is the Instagram permalink and exists
+      // only once Buffer has actually sent the post, so it is passed through
+      // when present and omitted otherwise — a dead link on the posts list is
+      // worse than no link.
+      ...(post.externalLink ? { remoteUrl: post.externalLink } : {}),
       pending: post.status !== 'sent',
     }
   }

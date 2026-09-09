@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { InstagramBufferProvider } from '../instagramBuffer/adapter.js'
 import { FacebookBufferProvider } from '../facebookBuffer/adapter.js'
 import { assetsFor, channelsOfService, toRemotePost } from './route.js'
+import { resetOrganizationCache } from './client.js'
 import { ProviderError } from '../errors.js'
 import type { Account, Credential, PublishPayload } from '../base.js'
 
@@ -40,13 +41,30 @@ const payload = (over: Partial<PublishPayload> = {}): PublishPayload => ({
   ...over,
 })
 
-/** Answers each call with the next queued response, recording the request. */
+/**
+ * Answers each call with the next queued response, recording the request.
+ *
+ * The `account` lookup is answered automatically and neither queued nor
+ * recorded. Every channel and post operation needs an organizationId first —
+ * Buffer requires it and the docs' examples omit it — and making forty tests
+ * each prepend the same account response would bury what each one is actually
+ * about.
+ */
 function stub(responses: Array<{ status?: number; body: unknown; headers?: Record<string, string> }>) {
   const calls: Array<{ body: string | undefined }> = []
   let i = 0
 
   vi.stubGlobal('fetch', async (_input: URL | string, init?: RequestInit) => {
-    calls.push({ body: init?.body as string | undefined })
+    const sent = init?.body as string | undefined
+
+    if (sent?.includes('query Account')) {
+      return new Response(
+        JSON.stringify({ data: { account: { id: 'acc_1', organizations: [{ id: 'org_1' }] } } }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    }
+
+    calls.push({ body: sent })
     const next = responses[i++] ?? { body: {} }
     return new Response(JSON.stringify(next.body), {
       status: next.status ?? 200,
@@ -61,6 +79,9 @@ const channels = (list: unknown[]) => ({ body: { data: { channels: list } } })
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  // The organization is cached per key for the process lifetime, which is right
+  // in production and would leak one test's account into the next here.
+  resetOrganizationCache()
 })
 
 describe('reading the channel list', () => {
@@ -253,8 +274,13 @@ describe('what each network requires', () => {
 
     expect(result.remoteId).toBe('p1')
     expect(calls).toHaveLength(1)
-    // No assets key at all, rather than an empty array.
-    expect(calls[0]?.body).not.toContain('assets')
+    // An EMPTY LIST, not an omitted field. `assets` is non-null in Buffer's
+    // schema, so omitting it fails validation — which is what the first version
+    // did, and it would have broken every text-only Facebook post.
+    const body = JSON.parse(calls[0]?.body ?? '{}') as {
+      variables: { input: { assets: unknown[] } }
+    }
+    expect(body.variables.input.assets).toEqual([])
   })
 
   it('refuses a Facebook post that is neither text nor media', async () => {
@@ -308,6 +334,135 @@ describe('sending a post', () => {
     }
     expect(sent.variables.input.mode).toBe('shareNow')
     expect(sent.variables.input.dueAt).toBeUndefined()
+  })
+
+  it('sends the fields Buffer REQUIRES, which the documented examples omit', async () => {
+    // Checked against the live schema. Every one of these was missing or wrong
+    // in the first version, which passed forty tests and could not have made a
+    // single successful call:
+    //   organizationId — required by channels and posts
+    //   needsApproval  — required by createPost, in no published example
+    //   assets         — non-null, so always sent
+    const calls = stub([
+      { body: { data: { createPost: { __typename: 'PostActionSuccess', post: { id: 'p' } } } } },
+    ])
+
+    await instagram.publish(IG_ACCOUNT, CREDENTIAL, payload())
+
+    const sent = JSON.parse(calls[0]?.body ?? '{}') as {
+      query: string
+      variables: { input: Record<string, unknown> }
+    }
+    expect(sent.variables.input['needsApproval']).toBe(false)
+    expect(sent.variables.input['assets']).toBeDefined()
+    // The union is PostActionPayload, so a fragment on MutationError would be a
+    // validation error rather than a fallback.
+    expect(sent.query).toContain('PostActionSuccess')
+    expect(sent.query).not.toContain('MutationError')
+  })
+
+  it('asks the channel list for an organization, because Buffer requires one', async () => {
+    const calls = stub([{ body: { data: { channels: [] } } }])
+    await instagram.handleCallback({} as never, { apiKey: 'k' }).catch(() => undefined)
+
+    const sent = JSON.parse(calls[0]?.body ?? '{}') as {
+      variables: { input: { organizationId: string } }
+    }
+    expect(sent.variables.input.organizationId).toBe('org_1')
+  })
+
+  it('maps each arm of the result union onto the retry taxonomy', async () => {
+    // Six error types, and the difference decides whether the scheduler backs
+    // off, stops, or gives up. One generic failure would get all three wrong.
+    const cases = [
+      ['UnauthorizedError', 'PermissionRevoked', false],
+      ['LimitReachedError', 'RateLimited', true],
+      ['UnexpectedError', 'ProviderDown', true],
+      ['NotFoundError', 'PermanentFailure', false],
+      ['InvalidInputError', 'ContentRejected', false],
+      ['RestProxyError', 'ContentRejected', false],
+    ] as const
+
+    for (const [typename, code, retryable] of cases) {
+      stub([{ body: { data: { createPost: { __typename: typename, message: 'nope' } } } }])
+      const error = await instagram
+        .publish(IG_ACCOUNT, CREDENTIAL, payload())
+        .catch((e: unknown) => e)
+
+      expect((error as ProviderError).code, typename).toBe(code)
+      expect((error as ProviderError).retryable, typename).toBe(retryable)
+      resetOrganizationCache()
+    }
+  })
+
+  it('treats a post Buffer accepted and then failed to send as rejected content', async () => {
+    stub([
+      {
+        body: {
+          data: {
+            createPost: {
+              __typename: 'PostActionSuccess',
+              post: {
+                id: 'p',
+                status: 'error',
+                error: { message: 'Instagram refused the aspect ratio' },
+              },
+            },
+          },
+        },
+      },
+    ])
+
+    const error = await instagram
+      .publish(IG_ACCOUNT, CREDENTIAL, payload())
+      .catch((e: unknown) => e)
+
+    expect((error as ProviderError).code).toBe('ContentRejected')
+    expect((error as ProviderError).message).toMatch(/aspect ratio/)
+    // Retrying would send the same rejected content again.
+    expect((error as ProviderError).retryable).toBe(false)
+  })
+
+  it('returns the network permalink when Buffer has one, and no link when it does not', async () => {
+    stub([
+      {
+        body: {
+          data: {
+            createPost: {
+              __typename: 'PostActionSuccess',
+              post: { id: 'p', status: 'sent', externalLink: 'https://instagram.com/p/abc' },
+            },
+          },
+        },
+      },
+    ])
+    const withLink = await instagram.publish(IG_ACCOUNT, CREDENTIAL, payload())
+    expect(withLink.remoteUrl).toBe('https://instagram.com/p/abc')
+
+    resetOrganizationCache()
+    stub([
+      { body: { data: { createPost: { __typename: 'PostActionSuccess', post: { id: 'q' } } } } },
+    ])
+    const noLink = await instagram.publish(IG_ACCOUNT, CREDENTIAL, payload())
+    // Absent rather than a dead link on the posts list.
+    expect(noLink.remoteUrl).toBeUndefined()
+  })
+
+  it('keeps a usable answer even when Buffer errors on a field beside it', async () => {
+    // Buffer answers a partly-forbidden query with BOTH data and errors. A real
+    // key does this. Throwing on any error would discard the channels over a
+    // field we can live without.
+    stub([
+      {
+        body: {
+          data: { channels: [{ id: 'c1', name: 'x', service: 'instagram' }] },
+          errors: [{ message: 'Not authorized to access this resource' }],
+        },
+      },
+    ])
+
+    const found = await instagram.handleCallback({} as never, { apiKey: 'k' })
+    expect(found).toHaveLength(1)
   })
 
   it('reports a post Buffer has not sent yet as pending', async () => {
@@ -438,7 +593,7 @@ describe('reading posts back', () => {
 })
 
 describe('metrics', () => {
-  it('flattens Buffer’s key/value metrics into the shape the ingester stores', async () => {
+  it('flattens Buffer’s name/value metrics into the shape the ingester stores', async () => {
     stub([
       {
         body: {
@@ -446,9 +601,9 @@ describe('metrics', () => {
             post: {
               id: 'p1',
               metrics: [
-                { key: 'impressions', value: 120 },
-                { key: 'reactions', value: 8 },
-                { key: 'reach', value: null },
+                { name: 'impressions', value: 120 },
+                { name: 'reactions', value: 8 },
+                { name: 'reach', value: null },
               ],
             },
           },

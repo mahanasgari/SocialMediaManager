@@ -915,13 +915,19 @@ Both are asserted against the live database rather than reviewed by eye.
 
 ## Built, but not exercised against a live provider
 
-The **Buffer routes** — `instagramBuffer` and `facebookBuffer` — are implemented,
-unit tested against a stubbed transport, and have never spoken to Buffer. No key
-has been issued on this install, so the GraphQL operation names, the shape of the
-`createPost` union and the `Post.metrics` keys come from Buffer's published
-documentation rather than from a response anyone has seen. The auth model, the
-endpoint and the capability consequences are documented facts; whether Buffer
-accepts exactly what we send is unverified until a key exists.
+The **Buffer routes** — `instagramBuffer` and `facebookBuffer` — have now been
+run against live Buffer with a real key. Connecting, profile refresh and reading
+posts back all work: `handleCallback` discovered a real Instagram channel,
+`fetchProfile` returned its handle, and `retrievePosts` returned a real post
+reporting one attached asset.
+
+**Publishing is still unverified**, deliberately: `createPost` posts publicly to
+a real account, and that is not something to trigger as a test without asking.
+The mutation is built against the introspected schema and its required fields
+are covered by unit tests, but no post has been sent through it.
+
+Doing that live run corrected six schema errors that forty green unit tests had
+not — see PROVIDERS.md, "The published examples do not match the schema".
 
 Note also that these two are currently the ONLY working route to Instagram or
 Facebook on this install, because the direct connectors have no Meta credentials.
