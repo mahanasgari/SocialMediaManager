@@ -25,7 +25,7 @@ const suite = dbUrl ? describe : describe.skip
 if (!dbUrl) console.warn('\n  [skipped] exports — run: bash scripts/test-db.sh up\n')
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const omitTenancy = <T,>(data: T) => data as any
+const omitTenancy = <T>(data: T) => data as any
 
 let client: Db
 let orgId: string
@@ -49,86 +49,101 @@ suite('building an export', () => {
       userId = user.id
     })
 
-    await withOrganization(orgId, async (tx) => {
-      const ws = await tx.workspace.create({
-        data: omitTenancy({ name: 'Export WS', slug: `export-${stamp}` }),
-      })
-      workspaceId = ws.id
-      await tx.membership.create({ data: omitTenancy({ userId, workspaceId, role: 'OWNER' }) })
-    })
+    // The test client is passed EXPLICITLY here, as the fault-injection suite
+    // does. Both helpers default their client to db(), the singleton that reads
+    // DATABASE_URL — which this suite never sets before this point, because the
+    // later cases set it themselves right before calling runExports(). Locally
+    // that gap is invisible: a developer's shell has DATABASE_URL exported. In
+    // CI only TEST_DATABASE_URL exists, so the fixture failed at the first
+    // write and took the whole suite with it.
+    await withOrganization(
+      orgId,
+      async (tx) => {
+        const ws = await tx.workspace.create({
+          data: omitTenancy({ name: 'Export WS', slug: `export-${stamp}` }),
+        })
+        workspaceId = ws.id
+        await tx.membership.create({ data: omitTenancy({ userId, workspaceId, role: 'OWNER' }) })
+      },
+      client
+    )
 
-    await withTenant(workspaceId, async (tx) => {
-      const account = await tx.socialAccount.create({
-        data: omitTenancy({
-          organizationId: orgId,
-          provider: 'mock',
-          providerAccountId: `export-${stamp}`,
-          handle: '@brand',
-          displayName: 'Brand',
-          surfaces: ['feed'],
-        }),
-        select: { id: true },
-      })
-      accountId = account.id
-
-      // A credential exists, so "the export omits it" is a real assertion rather
-      // than a vacuous one.
-      await tx.oAuthCredential.create({
-        data: omitTenancy({
-          socialAccountId: accountId,
-          accessToken: 'sealed-token-value',
-          scopes: ['write'],
-          keyId: 'k1',
-        }),
-      })
-
-      const post = await tx.post.create({
-        data: omitTenancy({
-          organizationId: orgId,
-          authorId: userId,
-          baseContent: 'Hello from the export fixture',
-          status: 'PUBLISHED',
-        }),
-        select: { id: true },
-      })
-      await tx.postVariant.create({
-        data: omitTenancy({
-          organizationId: orgId,
-          postId: post.id,
-          socialAccountId: accountId,
-          surface: 'feed',
-          status: 'PUBLISHED',
-        }),
-      })
-
-      // Two subjects whose handles share a prefix. This is the whole point of
-      // the second test.
-      for (const [handle, body] of [
-        ['@ada', 'A message from Ada'],
-        ['@adamson', 'A message from Adamson, who is a different person'],
-      ] as const) {
-        const conversation = await tx.conversation.create({
+    await withTenant(
+      workspaceId,
+      async (tx) => {
+        const account = await tx.socialAccount.create({
           data: omitTenancy({
             organizationId: orgId,
-            socialAccountId: accountId,
-            providerConversationId: `conv-${handle}-${stamp}`,
-            kind: 'DM',
-            subjectHandle: handle,
+            provider: 'mock',
+            providerAccountId: `export-${stamp}`,
+            handle: '@brand',
+            displayName: 'Brand',
+            surfaces: ['feed'],
           }),
           select: { id: true },
         })
-        await tx.message.create({
+        accountId = account.id
+
+        // A credential exists, so "the export omits it" is a real assertion rather
+        // than a vacuous one.
+        await tx.oAuthCredential.create({
           data: omitTenancy({
-            conversationId: conversation.id,
-            providerMessageId: `msg-${handle}-${stamp}`,
-            direction: 'IN',
-            authorHandle: handle,
-            body,
-            providerCreatedAt: new Date(),
+            socialAccountId: accountId,
+            accessToken: 'sealed-token-value',
+            scopes: ['write'],
+            keyId: 'k1',
           }),
         })
-      }
-    })
+
+        const post = await tx.post.create({
+          data: omitTenancy({
+            organizationId: orgId,
+            authorId: userId,
+            baseContent: 'Hello from the export fixture',
+            status: 'PUBLISHED',
+          }),
+          select: { id: true },
+        })
+        await tx.postVariant.create({
+          data: omitTenancy({
+            organizationId: orgId,
+            postId: post.id,
+            socialAccountId: accountId,
+            surface: 'feed',
+            status: 'PUBLISHED',
+          }),
+        })
+
+        // Two subjects whose handles share a prefix. This is the whole point of
+        // the second test.
+        for (const [handle, body] of [
+          ['@ada', 'A message from Ada'],
+          ['@adamson', 'A message from Adamson, who is a different person'],
+        ] as const) {
+          const conversation = await tx.conversation.create({
+            data: omitTenancy({
+              organizationId: orgId,
+              socialAccountId: accountId,
+              providerConversationId: `conv-${handle}-${stamp}`,
+              kind: 'DM',
+              subjectHandle: handle,
+            }),
+            select: { id: true },
+          })
+          await tx.message.create({
+            data: omitTenancy({
+              conversationId: conversation.id,
+              providerMessageId: `msg-${handle}-${stamp}`,
+              direction: 'IN',
+              authorHandle: handle,
+              body,
+              providerCreatedAt: new Date(),
+            }),
+          })
+        }
+      },
+      client
+    )
   }, 60_000)
 
   beforeEach(async () => {

@@ -113,16 +113,6 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 5s
           --health-timeout 3s --health-retries 10
         ports: ["6379:6379"]
-      minio:
-        image: bitnami/minio:latest
-        env:
-          MINIO_ROOT_USER: minioadmin
-          MINIO_ROOT_PASSWORD: minioadmin
-          MINIO_DEFAULT_BUCKETS: smm
-        options: >-
-          --health-cmd "mc ready local" --health-interval 5s
-          --health-timeout 5s --health-retries 20
-        ports: ["9000:9000"]
 
     env:
       DATABASE_URL: postgresql://smm_app_user:smm@localhost:5432/smm_test
@@ -153,6 +143,31 @@ jobs:
         run: |
           echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
           echo "SESSION_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      # MinIO runs as a STEP rather than a service container.
+      #
+      # It was `bitnami/minio:latest`, which Bitnami withdrew — the tag now
+      # answers "manifest unknown" and the job died before a single test ran.
+      # The official `minio/minio` image is what docker-compose.yml already
+      # uses, but it needs `server /data` as its command, and a service
+      # container has nowhere to put one. So it is started explicitly, which
+      # also lets the bucket be created here instead of relying on an
+      # image-specific convenience variable.
+      - name: Start MinIO and create the bucket
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live >/dev/null && break
+            sleep 2
+          done
+
+          docker run --rm --network host --entrypoint sh minio/mc:latest -c \
+            "mc alias set local http://localhost:9000 minioadmin minioadmin && \
+             mc mb --ignore-existing local/smm"
 
       - run: pnpm db:generate
 
