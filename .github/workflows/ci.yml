@@ -22,6 +22,13 @@ env:
   S3_SECRET_ACCESS_KEY: minioadmin
   S3_REGION: us-east-1
 
+  # The application validates its whole environment on boot, so any suite that
+  # touches application code needs a complete one — not merely the parts that
+  # suite happens to use. The e2e job overrides these at job level.
+  REDIS_URL: redis://localhost:6379
+  PUBLIC_URL: http://localhost:3000
+  INTERNAL_API_URL: http://localhost:3001
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -47,6 +54,13 @@ jobs:
         with: { node-version: 22, cache: pnpm }
 
       - run: pnpm install --frozen-lockfile
+
+      # ENCRYPTION_KEY must decode to exactly 32 bytes; the app refuses to boot
+      # otherwise. Thrown away with the runner.
+      - name: Generate throwaway secrets
+        run: |
+          echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+          echo "SESSION_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
 
       # Same explicit start as the e2e job, and for the same reason: the
       # official image needs `server /data`, which a service container cannot
@@ -220,10 +234,16 @@ jobs:
             GRANT smm_app TO smm_app_user;
           SQL
 
+      - run: pnpm build
+
+      # AFTER the build, not before. The seed runs the TypeScript sources, which
+      # import @smm/config; without the `development` export condition that
+      # resolves to dist/, and dist/ does not exist until the build has run. The
+      # step used to sit above it and failed with "Cannot find module
+      # '@smm/config'" — a message that points at the import rather than at the
+      # ordering that caused it.
       - name: Seed the demo workspace the suite signs in to
         run: DATABASE_URL="$MIGRATE_DATABASE_URL" pnpm db:seed
-
-      - run: pnpm build
 
       - name: Start the stack
         run: |
