@@ -13,6 +13,15 @@ env:
   MIGRATE_DATABASE_URL: postgresql://smm:smm@localhost:5432/smm_test
   TEST_REDIS_URL: redis://localhost:6379
 
+  # The exports suite writes a real archive to real object storage — that is
+  # the point of it, since the assertions are about what the FILE contains.
+  # Both jobs therefore need storage, not just the end-to-end one.
+  S3_ENDPOINT: http://localhost:9000
+  S3_BUCKET: smm
+  S3_ACCESS_KEY_ID: minioadmin
+  S3_SECRET_ACCESS_KEY: minioadmin
+  S3_REGION: us-east-1
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -38,6 +47,26 @@ jobs:
         with: { node-version: 22, cache: pnpm }
 
       - run: pnpm install --frozen-lockfile
+
+      # Same explicit start as the e2e job, and for the same reason: the
+      # official image needs `server /data`, which a service container cannot
+      # express, and the bitnami image that could was withdrawn.
+      - name: Start MinIO and create the bucket
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live >/dev/null && break
+            sleep 2
+          done
+
+          docker run --rm --network host --entrypoint sh minio/mc:latest -c \
+            "mc alias set local http://localhost:9000 minioadmin minioadmin && \
+             mc mb --ignore-existing local/smm"
+
       - run: pnpm db:generate
 
       - name: Apply migrations as the owner
@@ -137,7 +166,13 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
 
-      - run: pnpm install --frozen-lockfile
+      # --prod=false because this job sets NODE_ENV=production for the SERVERS
+      # it starts later, and pnpm reads that at install time to skip
+      # devDependencies. Prisma and Playwright are both devDependencies, so the
+      # job got as far as `prisma: not found`. The variable is right for the
+      # runtime and wrong for the install; this says so explicitly rather than
+      # moving it and hoping nothing downstream depended on it.
+      - run: pnpm install --frozen-lockfile --prod=false
 
       - name: Generate throwaway secrets
         run: |
